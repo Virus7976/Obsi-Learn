@@ -174,6 +174,13 @@ class SourceErrorsTest {
         org.junit.Assert.assertEquals("http://x:8080/a", app.obsilearn.data.SourceErrors.plainHttpFor("https://x:8080/a", java.net.SocketTimeoutException("Read timed out")))
     }
 
+    @Test fun anSmbAddressInTheWebDavFormBecomesAShare() {
+        val s = app.obsilearn.data.Source("webdav-1", "webdav", "NAS", "smb://192.168.50.137/Media", "jake", "pw")
+        assertEquals("smb", app.obsilearn.data.SourceErrors.kindFor(s).kind)
+        assertEquals("webdav", app.obsilearn.data.SourceErrors.kindFor(s.copy(kind = "smb", uri = "http://nas:8080/Media")).kind)
+        assertEquals("webdav", app.obsilearn.data.SourceErrors.kindFor(s.copy(uri = "http://nas:8080/Media")).kind)
+    }
+
     @Test fun errorsAreSaidInPlainWords() {
         assertTrue(app.obsilearn.data.SourceErrors.say(java.net.ConnectException("failed")).startsWith("Nothing answered"))
         assertTrue(app.obsilearn.data.SourceErrors.say(java.io.IOException("x", javax.net.ssl.SSLHandshakeException("Trust anchor for certification path not found."))).contains("not trusted"))

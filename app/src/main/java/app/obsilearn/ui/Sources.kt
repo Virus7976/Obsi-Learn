@@ -103,8 +103,11 @@ fun AddSourceSheet(onDismiss: () -> Unit) {
     fun say(t: String) = android.widget.Toast.makeText(ctx, t, android.widget.Toast.LENGTH_LONG).show()
 
     /** Saves the source, reads it, and closes when courses were found. */
-    fun add(s: Source) {
+    fun add(given: Source) {
         busy = true; error = null
+        // The address says what it is. An smb:// address in the WebDAV form is a share, and the other way round.
+        val s = SourceErrors.kindFor(given)
+        if (s.kind != given.kind) say(if (s.kind == "smb") "That is a shared-folder (SMB) address, so ObsiLearn uses it as one." else "That is a web address, so ObsiLearn uses WebDAV.")
         app.courses.addSource(s)
         scope.launch {
             var r = runCatching { app.courses.scan(s.id) }

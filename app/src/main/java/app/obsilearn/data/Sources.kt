@@ -36,6 +36,16 @@ class SourceException(message: String) : Exception(message)
 
 /** Turns what went wrong while reading a source into words a person can act on. */
 object SourceErrors {
+    /** A WebDAV or SMB source whose address belongs to the other kind, switched to that kind. */
+    fun kindFor(s: Source): Source {
+        val u = s.uri.trim().lowercase()
+        return when {
+            s.kind == "webdav" && (u.startsWith("smb://") || u.startsWith("\\\\")) -> s.copy(kind = "smb", id = s.id.replaceFirst("webdav", "smb"))
+            s.kind == "smb" && (u.startsWith("http://") || u.startsWith("https://")) -> s.copy(kind = "webdav", id = s.id.replaceFirst("smb", "webdav"))
+            else -> s
+        }
+    }
+
     /** The http address to try, when an https one failed because the server speaks plain http. */
     fun plainHttpFor(uri: String, e: Throwable?): String? {
         if (e == null || !uri.startsWith("https://", true)) return null
