@@ -29,3 +29,12 @@
 -dontwarn com.github.MuntashirAkon.**
 -dontwarn org.conscrypt.**
 -dontwarn android.sun.**
+
+# Shared folders (SMB). jcifs-ng signs in with NTLM, which needs MD4 and other hashes from
+# BouncyCastle. BouncyCastle finds each algorithm by class name at run time, so the shrinker
+# cannot see them and removed them ("no such algorithm: MD4 for provider BC").
+-keep class org.bouncycastle.jce.provider.** { *; }
+-keep class org.bouncycastle.jcajce.provider.** { *; }
+-keep class jcifs.** { *; }
+-dontwarn org.bouncycastle.**
+-dontwarn jcifs.**
