@@ -1,0 +1,34 @@
+package app.obsilearn
+
+import app.obsi.core.*
+import app.obsi.core.data.*
+import app.obsi.core.obsidian.*
+import app.obsi.core.ui.*
+import app.obsi.core.update.*
+import app.obsi.core.link.*
+import app.obsi.core.share.*
+
+import app.obsi.core.data.AppSettings
+import app.obsi.core.data.Highlight
+import app.obsilearn.data.SavedVideo
+import app.obsilearn.data.VideoMeta
+import app.obsilearn.obsidian.NoteBuilder
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Test
+
+class SongNoteTest {
+    private val video = SavedVideo(VideoMeta("abc12345678", "A song", "A band"))
+
+    @Test fun aNoteWithoutWordsIsATimedBullet() {
+        val h = Highlight("1", 83.0, 83.0, "", "the bass drops here", 0)
+        assertEquals("- [1:23](obsilearn://lesson/abc12345678?t=83) the bass drops here", NoteBuilder.highlightEntry(video, h, AppSettings()))
+    }
+
+    @Test fun aMarkWithNoTextIsJustTheTime() {
+        val h = Highlight("2", 5.0, 5.0, "", "", 0)
+        val out = NoteBuilder.highlightEntry(video, h, AppSettings())
+        assertEquals("- [0:05](obsilearn://lesson/abc12345678?t=5)", out)
+        assertFalse(out.contains("=="))
+    }
+}

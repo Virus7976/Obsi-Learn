@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:name=".ObsiLearnApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher_amethyst"
+        android:roundIcon="@mipmap/ic_launcher_amethyst"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:theme="@style/Theme.Marginalia">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|fontScale">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- Lesson links in your notes: obsilearn://lesson/<id>?t=<second> -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="obsilearn" />
+            </intent-filter>
+            <!-- A video file opened from a file app plays as a lesson. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- One entry per app icon. Exactly one is on, and Settings picks which. -->
+        <activity-alias
+            android:name=".IconRuby"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:enabled="false"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconAmethyst"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:enabled="true"
+            android:icon="@mipmap/ic_launcher_amethyst"
+            android:roundIcon="@mipmap/ic_launcher_amethyst">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconSapphire"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:enabled="false"
+            android:icon="@mipmap/ic_launcher_sapphire"
+            android:roundIcon="@mipmap/ic_launcher_sapphire">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconEmerald"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:enabled="false"
+            android:icon="@mipmap/ic_launcher_emerald"
+            android:roundIcon="@mipmap/ic_launcher_emerald">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconAmber"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:enabled="false"
+            android:icon="@mipmap/ic_launcher_amber"
+            android:roundIcon="@mipmap/ic_launcher_amber">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconClassic"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:enabled="false"
+            android:icon="@mipmap/ic_launcher_classic"
+            android:roundIcon="@mipmap/ic_launcher_classic">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity
+            android:name=".LockScreenActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|fontScale" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/files" />
+        </provider>
+        <service
+            android:name=".WorkService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".player.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+        <receiver android:name="app.obsi.core.update.InstallReceiver" android:exported="false" />
+        <receiver android:name=".ReviewReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="app.obsilearn.REVIEW" />
+            </intent-filter>
+        </receiver>
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERNET" />
+    </application>
+</manifest>

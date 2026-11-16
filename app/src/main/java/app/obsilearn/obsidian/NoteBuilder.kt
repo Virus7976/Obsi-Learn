@@ -1,0 +1,210 @@
+package app.obsilearn.obsidian
+
+import app.obsi.core.data.Transcripts
+
+import app.obsi.core.*
+import app.obsi.core.data.*
+import app.obsi.core.obsidian.*
+import app.obsi.core.ui.*
+import app.obsi.core.update.*
+import app.obsi.core.link.*
+import app.obsi.core.share.*
+
+import app.obsi.core.data.AppSettings
+import app.obsi.core.data.ClipTemplate
+import app.obsi.core.data.Line
+import app.obsilearn.data.SavedVideo
+import app.obsi.core.data.TemplateProperty
+import java.time.ZonedDateTime
+
+
+
+object NoteBuilder {
+    /** Opens the lesson in ObsiLearn at that second. */
+    fun timeLink(id: String, sec: Double) = "obsilearn://lesson/$id?t=${sec.toInt()}"
+
+    /** The colour is a coloured circle right after the opening marks, then the text. */
+    fun styled(h: app.obsi.core.data.Highlight, settings: AppSettings): String {
+        val text = h.text.replace(Regex("\\s*\\n\\s*"), " ").trim()
+        if (settings.highlightSyntax != "obsidian") return text
+        val emoji = app.obsi.core.data.HighlightColors.getOrNull(h.color)?.emoji.orEmpty()
+        return "==$emoji$text=="
+    }
+
+    fun highlightEntry(video: SavedVideo, h: app.obsi.core.data.Highlight, settings: AppSettings): String {
+        // A note with no highlighted words, such as one written while a song plays.
+        if (h.text.isBlank()) {
+            val note = h.note.replace(Regex("\\s*\\n\\s*"), " ").trim()
+            return "- [" + Transcripts.formatTime(h.startSec) + "](" + timeLink(video.meta.id, h.startSec) + ")" + (if (note.isEmpty()) "" else " $note") + tagText(h)
+        }
+        val body = settings.highlightFormat
+            .replace("{text}", styled(h, settings))
+            .replace("{time}", Transcripts.formatTime(h.startSec))
+            .replace("{link}", timeLink(video.meta.id, h.startSec))
+        return (if (h.note.isBlank()) body else body + "\n\n" + h.note.trim()) + tagText(h)
+    }
+
+    /** The tags of one highlight as Obsidian tags, after a space. Empty when it has none. */
+    private fun tagText(h: app.obsi.core.data.Highlight): String =
+        if (h.tags.isEmpty()) "" else " " + h.tags.joinToString(" ") { "#" + it }
+
+    fun highlightsMarkdown(video: SavedVideo, settings: AppSettings): String =
+        video.highlights.sortedBy { it.startSec }.joinToString("\n\n") { highlightEntry(video, it, settings) }
+
+    fun transcriptMarkdown(video: SavedVideo, lines: List<Line>): String {
+        val sb = StringBuilder()
+        var chapterIdx = -1
+        for (l in lines) {
+            val ci = video.chapters.indexOfLast { it.start <= l.start + 0.5 }
+            if (ci != chapterIdx && ci >= 0) {
+                if (sb.isNotEmpty()) sb.append("\n\n")
+                sb.append("## ").append(video.chapters[ci].title)
+                chapterIdx = ci
+            }
+            if (sb.isNotEmpty()) sb.append("\n\n")
+            sb.append("[").append(Transcripts.formatTime(l.start)).append("](")
+                .append(timeLink(video.meta.id, l.start)).append(") ").append(l.text)
+        }
+        return sb.toString()
+    }
+
+    fun variables(video: SavedVideo, lines: List<Line>, settings: AppSettings, now: ZonedDateTime = ZonedDateTime.now()): Map<String, String> {
+        val m = video.meta
+        val highlights = highlightsMarkdown(video, settings)
+        val transcript = transcriptMarkdown(video, lines)
+        val content = when {
+            highlights.isNotBlank() && settings.highlightBehavior == "replace-content" -> highlights
+            transcript.isNotBlank() -> transcript
+            else -> m.description
+        }
+        return mapOf(
+            "title" to m.title,
+            "url" to m.url,
+            "videoId" to m.id,
+            "author" to m.author,
+            "channel" to m.author,
+            "course" to m.course.ifBlank { m.author },
+            "module" to m.module,
+            "published" to m.published,
+            "date" to now.format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+            "time" to now.format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+            "description" to m.description.lines().firstOrNull { it.isNotBlank() }.orEmpty().take(300),
+            "fullDescription" to m.description,
+            "content" to content,
+            "highlights" to highlights,
+            "transcript" to transcript,
+            "image" to m.thumb,
+            "thumbnail" to m.thumb,
+            "duration" to Transcripts.formatTime(m.durationSec.toDouble()),
+            "minutes" to ((m.durationSec + 30) / 60).toString(),
+            "seconds" to m.durationSec.toString(),
+            "highlightCount" to video.highlights.size.toString(),
+            "chapters" to video.chapters.joinToString(",") { it.title },
+            "tags" to video.tags.joinToString(","),
+            "category" to video.category,
+            "embed" to "",
+            "domain" to "obsilearn",
+            "site" to "ObsiLearn",
+            "words" to content.split(Regex("\\s+")).count { it.isNotBlank() }.toString(),
+        )
+    }
+
+    /**
+     * Adds the always-on tags and properties to a template's properties.
+     * A template value that is already filled in is kept. Tags are joined, never replaced.
+     */
+    fun withAutos(base: List<TemplateProperty>, autoTags: List<String>, autoProps: List<TemplateProperty>): List<TemplateProperty> {
+        val out = base.toMutableList()
+        fun clean(t: String) = t.trim().removePrefix("#").trim('"')
+        val tagsToAdd = autoTags.map(::clean).filter { it.isNotBlank() }
+        if (tagsToAdd.isNotEmpty()) {
+            val i = out.indexOfFirst { it.name.equals("tags", ignoreCase = true) }
+            if (i < 0) {
+                out += TemplateProperty("auto:tags", "tags", tagsToAdd.joinToString(","), "multitext")
+            } else {
+                val have = splitList(out[i].value).map(::clean).filter { it.isNotBlank() }
+                out[i] = out[i].copy(value = (have + tagsToAdd).distinct().joinToString(","))
+            }
+        }
+        for (a in autoProps) {
+            if (a.name.isBlank() || a.name.equals("tags", ignoreCase = true)) continue
+            val i = out.indexOfFirst { it.name.equals(a.name, ignoreCase = true) }
+            if (i < 0) out += a.copy(id = "auto:" + a.name)
+            else if (out[i].value.isBlank()) out[i] = out[i].copy(value = a.value)
+        }
+        return out
+    }
+
+    fun build(
+        template: ClipTemplate,
+        video: SavedVideo,
+        lines: List<Line>,
+        settings: AppSettings,
+        valueOverrides: Map<String, String> = emptyMap(),
+        nameOverride: String? = null,
+        folderOverride: String? = null,
+        vaultOverride: String? = null,
+    ): BuiltNote {
+        val vars = variables(video, lines, settings)
+        val props = withAutos(template.properties, settings.autoTags, settings.autoProps).map { p ->
+            val raw = valueOverrides[p.id] ?: Template.render(p.value, vars)
+            val type = p.type.ifBlank { settings.propertyTypes[p.name] ?: inferType(raw) }
+            BuiltProperty(p, type, raw)
+        }
+        val content = Template.render(template.noteContentFormat, vars)
+        val name = Template.safeName(nameOverride ?: Template.render(template.noteNameFormat, vars)).ifBlank { video.meta.id }
+        val folder = (folderOverride ?: Template.render(template.path, vars)).trim().trim('/')
+        // The vault chosen in Settings wins. A vault name inside an imported template is only a fallback.
+        val vault = vaultOverride ?: settings.vault.ifBlank { template.vault }
+        val md = buildString {
+            if (props.isNotEmpty()) {
+                append("---\n")
+                props.forEach { append(yaml(it)) }
+                append("---\n\n")
+            }
+            append(content)
+        }
+        return BuiltNote(vault, folder, name, template.behavior, props, content, md)
+    }
+
+    /** Obsidian's Automatic: the value decides the type. */
+    fun inferType(value: String): String {
+        val t = value.trim()
+        return when {
+            t.equals("true", true) || t.equals("false", true) -> "checkbox"
+            Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(t) -> "date"
+            Regex("^\\d{4}-\\d{2}-\\d{2}T.*").matches(t) && Template.parseDate(t) != null -> "datetime"
+            Regex("^-?\\d+(\\.\\d+)?$").matches(t) -> "number"
+            else -> "text"
+        }
+    }
+
+    // ---------- YAML properties ----------
+
+    private fun quote(s: String) =
+        "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace(Regex("\\s*\\n\\s*"), " ").trim() + "\""
+
+    fun splitList(value: String): List<String> = NoteLists.split(value)
+
+    fun yaml(p: BuiltProperty): String {
+        val key = if (Regex("^[A-Za-z0-9_ -]+$").matches(p.property.name)) p.property.name else quote(p.property.name)
+        val v = p.value.trim()
+        return when (p.type) {
+            "multitext" -> {
+                val items = splitList(v)
+                if (items.isEmpty()) "$key:\n" else "$key:\n" + items.joinToString("") { "  - ${quote(it)}\n" }
+            }
+            "date" -> {
+                val f = Template.formatDate(v, "YYYY-MM-DD")
+                if (v.isEmpty()) "$key:\n" else "$key: ${f ?: v}\n"
+            }
+            "datetime" -> {
+                val f = Template.formatDate(v, "YYYY-MM-DD[T]HH:mm:ss")
+                if (v.isEmpty()) "$key:\n" else "$key: ${f ?: v}\n"
+            }
+            "number" -> if (v.toDoubleOrNull() != null) "$key: $v\n" else "$key:\n"
+            "checkbox" -> "$key: ${v.equals("true", true) || v == "1" || v.equals("yes", true)}\n"
+            else -> if (v.isEmpty()) "$key:\n" else "$key: ${quote(v)}\n"
+        }
+    }
+}

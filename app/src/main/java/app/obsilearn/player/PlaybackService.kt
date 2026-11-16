@@ -1,0 +1,202 @@
+package app.obsilearn.player
+
+import app.obsi.core.*
+import app.obsi.core.data.*
+import app.obsi.core.obsidian.*
+import app.obsi.core.ui.*
+import app.obsi.core.update.*
+import app.obsi.core.link.*
+import app.obsi.core.share.*
+
+import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
+import androidx.media3.common.Player
+import androidx.media3.session.CommandButton
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import app.obsilearn.LockScreenActivity
+import app.obsilearn.MainActivity
+import app.obsilearn.ObsiLearnApp
+import app.obsilearn.R
+import com.google.common.collect.ImmutableList
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+
+/** Keeps playback alive in the background and draws the media notification. */
+class PlaybackService : MediaSessionService() {
+    private var session: MediaSession? = null
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+
+    /** When the screen goes off while audio plays, show the lock screen player (if it is turned on). */
+    private val screenOff = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            val app = application as ObsiLearnApp
+            // You unlocked the phone yourself, so the touch lock is no longer needed.
+            if (intent.action == Intent.ACTION_USER_PRESENT) { app.player.phoneUnlocked(); return }
+            app.player.phoneLocked.value = true
+            if (app.settings.value.lockScreen && app.player.state.value.playing) {
+                LockScreenActivity.launch(this@PlaybackService)
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, screenOff, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF).apply { addAction(Intent.ACTION_USER_PRESENT) },
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        val app = application as ObsiLearnApp
+        app.player.phoneLocked.value = getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
+        val highlight = SessionCommand(ACTION_HIGHLIGHT, Bundle.EMPTY)
+        val back10 = SessionCommand(ACTION_BACK10, Bundle.EMPTY)
+        val fwd10 = SessionCommand(ACTION_FWD10, Bundle.EMPTY)
+        val lock = SessionCommand(ACTION_LOCK, Bundle.EMPTY)
+
+        // Back 10 and forward 10 take the back and forward slots, where "previous" and "next" would be.
+        // Highlight goes in the extra slot. Play, pause and the seek bar are drawn by Android itself.
+        fun buttons(locked: Boolean, showLock: Boolean) = ImmutableList.builder<CommandButton>().add(
+            // These are custom actions, the same kind as Highlight. Phone makers draw custom actions
+            // on their media card, but they often skip the standard seek buttons.
+            CommandButton.Builder(CommandButton.ICON_SKIP_BACK_10)
+                .setDisplayName("Back 10 seconds")
+                .setSessionCommand(back10)
+                .setSlots(CommandButton.SLOT_BACK)
+                .build(),
+            CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD_10)
+                .setDisplayName("Forward 10 seconds")
+                .setSessionCommand(fwd10)
+                .setSlots(CommandButton.SLOT_FORWARD)
+                .build(),
+            CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+                .setCustomIconResId(R.drawable.ic_highlight)
+                .setDisplayName("Highlight")
+                .setSessionCommand(highlight)
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .build(),
+        ).also {
+            // Touch protection is for a phone in a pocket, so the button shows only on the lock screen.
+            // Unlocking is not here on purpose: it happens when you unlock the phone or open the app.
+            if (showLock) it.add(
+                CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+                    .setCustomIconResId(if (locked) R.drawable.ic_lock else R.drawable.ic_lock_open)
+                    .setDisplayName(if (locked) "Locked. Open ObsiLearn to unlock" else "Lock the controls")
+                    .setSessionCommand(lock)
+                    .setSlots(CommandButton.SLOT_OVERFLOW)
+                    .build(),
+            )
+        }.build()
+
+        // Tapping the notification opens the video that is playing.
+        val open = android.app.PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_NOW_PLAYING, true)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        session = MediaSession.Builder(this, SkipPlayer(app.player.exo) { app.player.locked.value })
+            .setSessionActivity(open)
+            .setMediaButtonPreferences(buttons(app.player.locked.value, app.player.phoneLocked.value))
+            .setCallback(object : MediaSession.Callback {
+                override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
+                    val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().add(highlight).add(back10).add(fwd10).add(lock).build()
+                    return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                        .setAvailableSessionCommands(commands)
+                        .build()
+                }
+
+                override fun onCustomCommand(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    customCommand: SessionCommand,
+                    args: Bundle,
+                ): ListenableFuture<SessionResult> {
+                    if (customCommand.customAction == ACTION_LOCK) app.player.setLocked(true)
+                    // A locked phone ignores every other button here.
+                    if (app.player.locked.value) return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                    when (customCommand.customAction) {
+                        ACTION_BACK10 -> app.player.skip(-10.0)
+                        ACTION_FWD10 -> app.player.skip(10.0)
+                    }
+                    if (customCommand.customAction == ACTION_HIGHLIGHT) {
+                        val message = QuickHighlight.run(app)
+                        Handler(Looper.getMainLooper()).post { Toast.makeText(app, message, Toast.LENGTH_SHORT).show() }
+                    }
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+            })
+            .build()
+        // Swap the lock button between open and closed, and take it away once the phone is unlocked.
+        scope.launch {
+            kotlinx.coroutines.flow.combine(app.player.locked, app.player.phoneLocked) { locked, phone -> locked to phone }
+                .collect { (locked, phone) -> session?.setMediaButtonPreferences(buttons(locked, phone)) }
+        }
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val app = application as ObsiLearnApp
+        // Swiping the app away stops playback unless the user turned on background play.
+        if (!app.settings.value.backgroundPlay || !app.player.state.value.playing) {
+            app.player.stop()
+            stopSelf()
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(screenOff) }
+        scope.cancel()
+        session?.release()
+        session = null
+        super.onDestroy()
+    }
+
+    companion object {
+        const val ACTION_HIGHLIGHT = "app.obsilearn.HIGHLIGHT"
+        const val ACTION_BACK10 = "app.obsilearn.BACK10"
+        const val ACTION_FWD10 = "app.obsilearn.FWD10"
+        const val ACTION_LOCK = "app.obsilearn.LOCK"
+    }
+}
+
+/** Shows back 10 and forward 10 where Android would show previous and next. */
+private class SkipPlayer(player: Player, private val locked: () -> Boolean) : androidx.media3.common.ForwardingPlayer(player) {
+    private val removed = listOf(
+        Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_NEXT,
+        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+    )
+
+    override fun getAvailableCommands(): Player.Commands {
+        val b = super.getAvailableCommands().buildUpon()
+        removed.forEach { b.remove(it) }
+        return b.add(Player.COMMAND_SEEK_BACK).add(Player.COMMAND_SEEK_FORWARD).build()
+    }
+
+    override fun isCommandAvailable(command: Int): Boolean =
+        availableCommands.contains(command)
+
+    // With the touch lock on, nothing from outside the app can change playback.
+    override fun play() { if (!locked()) super.play() }
+    override fun pause() { if (!locked()) super.pause() }
+    override fun setPlayWhenReady(playWhenReady: Boolean) { if (!locked()) super.setPlayWhenReady(playWhenReady) }
+    override fun seekTo(positionMs: Long) { if (!locked()) super.seekTo(positionMs) }
+    override fun seekTo(mediaItemIndex: Int, positionMs: Long) { if (!locked()) super.seekTo(mediaItemIndex, positionMs) }
+    override fun seekBack() { if (!locked()) super.seekBack() }
+    override fun seekForward() { if (!locked()) super.seekForward() }
+    override fun stop() { if (!locked()) super.stop() }
+    override fun setPlaybackSpeed(speed: Float) { if (!locked()) super.setPlaybackSpeed(speed) }
+
+    override fun seekToPrevious() = seekBack()
+    override fun seekToNext() = seekForward()
+    override fun seekToPreviousMediaItem() = seekBack()
+    override fun seekToNextMediaItem() = seekForward()
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Lesson files fetched to open in another app, and lessons saved for offline. -->
+    <cache-path name="open" path="open/" />
+    <files-path name="offline" path="offline/" />
+</paths>

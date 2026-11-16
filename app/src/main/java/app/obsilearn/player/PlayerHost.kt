@@ -1,0 +1,387 @@
+package app.obsilearn.player
+
+import app.obsi.core.*
+import app.obsi.core.data.*
+import app.obsi.core.obsidian.*
+import app.obsi.core.ui.*
+import app.obsi.core.update.*
+import app.obsi.core.link.*
+import app.obsi.core.share.*
+
+import android.app.Application
+import android.content.ComponentName
+import android.content.Context
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import app.obsi.core.data.AppSettings
+import app.obsilearn.data.LessonStreams
+import app.obsilearn.data.RoutingDataSource
+import app.obsilearn.data.Smb
+import app.obsilearn.data.Streams
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.produceIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+data class PlayerState(
+    val videoId: String? = null,
+    val title: String = "",
+    val author: String = "",
+    val playing: Boolean = false,
+    val buffering: Boolean = false,
+    val loading: Boolean = false,
+    val ended: Boolean = false,
+    val positionSec: Double = 0.0,
+    val durationSec: Double = 0.0,
+    val speed: Float = 1f,
+    val error: String? = null,
+    val videoOn: Boolean = false,
+    val canWatch: Boolean = false,
+    /** Every source was asked for a picture and none had one. Only the sound can play. */
+    val noPicture: Boolean = false,
+    /** Which fallback tier is playing right now. */
+    val via: String = "",
+)
+
+/**
+ * The one player for the whole app. It lives here, not in a screen, so audio keeps going when
+ * the screen goes away. Sources come from [LessonStreams]; if one dies, the next one takes over
+ * at the same spot.
+ */
+class PlayerHost(
+    private val app: Application,
+    private val finder: LessonStreams,
+    private val settings: () -> AppSettings,
+) {
+    private val main = Handler(Looper.getMainLooper())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val _state = MutableStateFlow(PlayerState())
+    val state: StateFlow<PlayerState> = _state.asStateFlow()
+
+    private val _locked = MutableStateFlow(false)
+
+    /**
+     * Touch lock, for a phone in a pocket. While it is on, the notification, the lock screen card and
+     * the headset buttons cannot pause, skip or seek. The screens in the app still work.
+     */
+    val locked: StateFlow<Boolean> = _locked.asStateFlow()
+    fun setLocked(on: Boolean) { _locked.value = on }
+
+    private val keyguard = app.getSystemService(android.app.KeyguardManager::class.java)
+    private val power = app.getSystemService(android.os.PowerManager::class.java)
+
+    /** True while the phone is locked. The lock button on the media card exists only then. */
+    val phoneLocked = MutableStateFlow(false)
+
+    /** The phone is open in your hand, so no touch protection is needed. */
+    fun phoneUnlocked() {
+        phoneLocked.value = false
+        _locked.value = false
+    }
+
+    private val http = DefaultHttpDataSource.Factory()
+        .setAllowCrossProtocolRedirects(true)
+        .setConnectTimeoutMs(15_000)
+        .setReadTimeoutMs(20_000)
+
+    val exo: ExoPlayer by lazy {
+        ExoPlayer.Builder(app)
+            // Plays files on the phone (content:// and file://) as well as from the network.
+            .setMediaSourceFactory(DefaultMediaSourceFactory(
+                RoutingDataSource.Factory(
+                    androidx.media3.datasource.DefaultDataSource.Factory(app, http),
+                    Smb.Factory { u: String -> finder.sourceFor(u) },
+                ),
+            ))
+            .setAudioAttributes(
+                AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(),
+                true,
+            )
+            .setHandleAudioBecomingNoisy(true)
+            // Without this the player never hears about volume changes, so Pause on mute cannot work.
+            .setDeviceVolumeControlEnabled(true)
+            .setSeekBackIncrementMs(10_000)
+            .setSeekForwardIncrementMs(10_000)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
+            .build()
+            .also { it.addListener(listener) }
+    }
+
+    /** The picture shown on the lock screen and in the notification, for a lesson id. */
+    var artworkFor: ((String) -> String?)? = null
+
+    /** Called when a video plays to its end. The queue hooks in here. */
+    var onEnded: (() -> Unit)? = null
+
+    /** Called with the video id and second to keep, while playing and whenever playback stops or moves on. */
+    var onPosition: ((String, Double) -> Unit)? = null
+
+    /** Called once when a video gets within the last 5 percent, so a playlist can drop it. */
+    var onWatched: ((String) -> Unit)? = null
+    private var watchedId: String? = null
+
+    private var controllerFuture: Any? = null
+    private var queue: ReceiveChannel<Streams>? = null
+    private var current: Streams? = null
+    private var job: Job? = null
+    private var pausedByMute = false
+    private var lastSave = 0L
+
+    private val listener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED) main.post { onEnded?.invoke() }
+            _state.update {
+                it.copy(
+                    buffering = playbackState == Player.STATE_BUFFERING,
+                    ended = playbackState == Player.STATE_ENDED,
+                    durationSec = exo.duration.takeIf { d -> d != C.TIME_UNSET }?.div(1000.0) ?: it.durationSec,
+                )
+            }
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            _state.update { it.copy(playing = isPlaying) }
+            if (!isPlaying) savePosition()
+        }
+
+        override fun onDeviceVolumeChanged(volume: Int, muted: Boolean) {
+            val silent = volume <= 0 || muted
+            if (silent && exo.playWhenReady && settings().pauseOnMute) {
+                pausedByMute = true
+                exo.pause()
+            } else if (!silent && pausedByMute) {
+                pausedByMute = false
+                if (settings().pauseOnMute && !exo.playWhenReady) exo.play()
+            }
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // You pressed play yourself, so the volume no longer decides.
+            if (playWhenReady) pausedByMute = false
+        }
+
+        override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+            _state.update { it.copy(speed = playbackParameters.speed) }
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            // This source died. Move to the next one and carry on from the same second.
+            next(exo.currentPosition / 1000.0, error.errorCodeName)
+        }
+    }
+
+    private val poll = object : Runnable {
+        override fun run() {
+            // The unlock broadcast did not always arrive on the test phone, so ask directly.
+            if (phoneLocked.value && power?.isInteractive == true && keyguard?.isKeyguardLocked == false) phoneUnlocked()
+            val st = _state.value
+            // While a source loads, or after every source failed, the player has no position. The last good one stays.
+            if (st.videoId != null && !st.loading && st.error == null && exo.mediaItemCount > 0) {
+                val pos = exo.currentPosition / 1000.0
+                val dur = exo.duration.takeIf { it != C.TIME_UNSET }?.div(1000.0)
+                val vid = _state.value.videoId
+                if (dur != null && dur > 60 && vid != null) {
+                    if (pos >= dur * 0.95 && watchedId != vid) { watchedId = vid; onWatched?.invoke(vid) }
+                    else if (pos < dur * 0.5 && watchedId == vid) watchedId = null
+                }
+                _state.update { s ->
+                    if (kotlin.math.abs(s.positionSec - pos) < 0.04 && (dur == null || dur == s.durationSec)) s
+                    else s.copy(positionSec = pos, durationSec = dur ?: s.durationSec)
+                }
+                val now = android.os.SystemClock.uptimeMillis()
+                if (exo.isPlaying && now - lastSave >= SAVE_EVERY_MS) { lastSave = now; savePosition() }
+            }
+            // Paused, nothing moves, so there is no reason to redraw five times a second.
+            main.postDelayed(this, if (exo.isPlaying) 200 else 1000)
+        }
+    }
+
+    /** Keeps the current second, wherever the app is: reader open, reader closed, or the queue moving on. */
+    fun savePosition() {
+        val s = _state.value
+        val id = s.videoId ?: return
+        if (s.positionSec > 1) onPosition?.invoke(id, s.positionSec)
+    }
+
+    // ---------- loading ----------
+
+    fun load(id: String, title: String, author: String, startSec: Double, force: Boolean = false) {
+        val cur = _state.value
+        if (!force && cur.videoId == id && cur.error == null && (cur.loading || exo.mediaItemCount > 0)) {
+            _state.update { it.copy(title = title, author = author) }
+            return
+        }
+        begin(id, title, author, startSec, force || settings().autoPlay)
+    }
+
+    fun retry() {
+        val s = _state.value
+        val id = s.videoId ?: return
+        begin(id, s.title, s.author, s.positionSec, true)
+    }
+
+    private fun begin(id: String, title: String, author: String, startSec: Double, autoplay: Boolean) {
+        savePosition()
+        job?.cancel()
+        queue?.cancel()
+        exo.stop()
+        exo.clearMediaItems()
+        current = null
+        _state.value = PlayerState(videoId = id, title = title, author = author, positionSec = startSec, loading = true, speed = _state.value.speed)
+        main.removeCallbacks(poll)
+        main.post(poll)
+
+        // The flow is lazy. The next source is only looked up if the current one fails.
+        val q = finder.candidates(id).produceIn(scope)
+        queue = q
+        job = scope.launch {
+            val first = q.receiveCatching().getOrNull()
+            if (first == null) fail("This lesson could not be found. Check that its source is there, then try again.")
+            else start(first, startSec, autoplay)
+        }
+    }
+
+    private fun next(resumeSec: Double, why: String) {
+        val id = _state.value.videoId ?: return
+        val q = queue ?: finder.candidates(id).produceIn(scope).also { queue = it }
+        // A paused video stays paused when its source changes.
+        val play = exo.playWhenReady
+        _state.update { it.copy(loading = true, buffering = false) }
+        job?.cancel()
+        job = scope.launch {
+            val n = q.receiveCatching().getOrNull()
+            if (n == null) fail("It would not play ($why). Check that its source is there, then try again.")
+            else start(n, resumeSec, play)
+        }
+    }
+
+    private fun start(s: Streams, startSec: Double, autoplay: Boolean) {
+        current = s
+        val st = _state.value
+        val useVideo = st.videoOn && s.videoUrl != null
+        val url = if (useVideo) s.videoUrl!! else s.audioUrl
+        http.setUserAgent("ObsiLearn")
+        http.setDefaultRequestProperties(s.headers)
+        val item = MediaItem.Builder()
+            .setUri(url)
+            .setMediaId(st.videoId.orEmpty())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(st.title)
+                    .setArtist(st.author)
+                    .apply { artworkFor?.invoke(st.videoId.orEmpty())?.takeIf { it.startsWith("http") || it.startsWith("file") || it.startsWith("content") }?.let { setArtworkUri(Uri.parse(it)) } }
+                    .build(),
+            )
+            .build()
+        exo.setMediaItem(item, (startSec * 1000).toLong())
+        exo.prepare()
+        exo.playWhenReady = autoplay
+        _state.update { it.copy(loading = false, error = null, canWatch = s.videoUrl != null || s.via == "saved", via = s.via, videoOn = useVideo) }
+    }
+
+    private fun fail(message: String) {
+        _state.update { it.copy(loading = false, buffering = false, playing = false, error = message) }
+    }
+
+    /** Switch between listening and watching without losing the spot. */
+    fun setVideo(on: Boolean) {
+        val s = current ?: return
+        if (on && s.videoUrl == null) {
+            // This source has sound only. Look for one with a picture; the sound plays on meanwhile.
+            findPicture()
+            return
+        }
+        _state.update { it.copy(videoOn = on) }
+        start(s, exo.currentPosition / 1000.0, exo.playWhenReady)
+    }
+
+    /**
+     * Asks the other sources, one by one, for one with a picture. The first that has one takes over at the same
+     * spot. If none has one, playback stays as it was and [PlayerState.noPicture] says so.
+     */
+    private fun findPicture() {
+        val id = _state.value.videoId ?: return
+        _state.update { it.copy(videoOn = true, loading = true) }
+        job?.cancel()
+        job = scope.launch {
+            // What is left of this lookup first, then one fresh lookup, since an earlier source may have a picture now.
+            val tries = listOfNotNull(queue, finder.candidates(id).produceIn(scope))
+            for (q in tries) {
+                while (true) {
+                    val n = q.receiveCatching().getOrNull() ?: break
+                    if (n.videoUrl != null) {
+                        queue = q
+                        start(n, exo.currentPosition / 1000.0, exo.playWhenReady)
+                        return@launch
+                    }
+                }
+            }
+            tries.forEach { it.cancel() }
+            queue = null
+            _state.update { it.copy(videoOn = false, loading = false, noPicture = true) }
+        }
+    }
+
+    fun connectService(context: Context) {
+        if (controllerFuture != null) return
+        runCatching {
+            val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
+            controllerFuture = MediaController.Builder(context.applicationContext, token).buildAsync()
+        }
+    }
+
+    // ---------- controls ----------
+
+    fun play() {
+        if (_state.value.ended) exo.seekTo(0)
+        exo.play()
+    }
+
+    fun pause() = exo.pause()
+    fun toggle() = if (exo.isPlaying || exo.playWhenReady) pause() else play()
+
+    fun seekTo(sec: Double) {
+        val s = sec.coerceAtLeast(0.0)
+        exo.seekTo((s * 1000).toLong())
+        _state.update { it.copy(positionSec = s) }
+    }
+
+    fun skip(deltaSec: Double) = seekTo(exo.currentPosition / 1000.0 + deltaSec)
+
+    fun setSpeed(speed: Float) = exo.setPlaybackSpeed(speed)
+
+    fun stop() {
+        savePosition()
+        job?.cancel()
+        queue?.cancel()
+        queue = null
+        exo.stop()
+        exo.clearMediaItems()
+        main.removeCallbacks(poll)
+        _state.value = PlayerState(speed = _state.value.speed)
+        _locked.value = false
+    }
+
+    private companion object {
+        const val SAVE_EVERY_MS = 5_000L
+    }
+}
