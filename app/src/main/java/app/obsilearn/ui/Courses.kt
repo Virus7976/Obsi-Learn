@@ -381,8 +381,8 @@ private fun LessonRow(
                     }
                     if (writing != null) MenuRow("Stop the transcript", Icons.Rounded.Subtitles) { menu = false; app.transcriber.cancel(l.id) }
                 }
-                if (l.page.isNotBlank()) MenuRow("Open the lesson page", Icons.Rounded.Description) { menu = false; openFile(ctx, app, l.id, l.page) }
-                l.resources.forEach { r -> MenuRow(r.title + " (" + r.ext.uppercase() + ")", Icons.Rounded.AttachFile) { menu = false; openFile(ctx, app, l.id, r.uri) } }
+                if (l.page.isNotBlank()) MenuRow("Open the lesson page", Icons.Rounded.Description) { menu = false; openFile(ctx, app, l.id, l.page, l.title, "html") }
+                l.resources.forEach { r -> MenuRow(r.title + " (" + r.ext.uppercase() + ")", Icons.Rounded.AttachFile) { menu = false; openFile(ctx, app, l.id, r.uri, r.title, r.ext) } }
             }
         }
     }
@@ -394,7 +394,7 @@ private fun Files(app: ObsiLearnApp, lessonId: String, files: List<app.obsilearn
     Column(Modifier.padding(horizontal = 20.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Files", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         files.forEach { r ->
-            Surface(onClick = { openFile(ctx, app, lessonId, r.uri) }, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+            Surface(onClick = { openFile(ctx, app, lessonId, r.uri, r.title, r.ext) }, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.AttachFile, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(10.dp))

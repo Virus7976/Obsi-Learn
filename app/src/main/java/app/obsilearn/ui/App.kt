@@ -1,5 +1,7 @@
 package app.obsilearn.ui
 
+import androidx.compose.runtime.LaunchedEffect
+
 import app.obsi.core.data.Transcripts
 
 import app.obsi.core.*
@@ -66,6 +68,7 @@ sealed interface Screen {
     data object Review : Screen
     data object Highlights : Screen
     data class Template(val id: String) : Screen
+    data class Doc(val req: DocRequest) : Screen
 }
 
 @Composable
@@ -93,13 +96,17 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
                 val top = stack.last()
                 if (!(top is Screen.Course && top.id == id)) stack.add(Screen.Course(id))
             }
+            LaunchedEffect(Unit) {
+                DocNav.requests.collect { r -> if (r != null) { stack.add(Screen.Doc(r)); DocNav.requests.value = null } }
+            }
             val nav = remember {
                 Nav(
                     openVideo = { id ->
                         val l = app.courses.find(id)?.third
                         when {
                             l == null -> toast("That lesson is not in your courses any more.")
-                            l.media.isBlank() -> openFile(ctx, app, id, l.page.ifBlank { l.resources.firstOrNull()?.uri.orEmpty() })
+                            l.media.isBlank() -> if (l.page.isNotBlank()) openFile(ctx, app, id, l.page, l.title, "html")
+                                else openFile(ctx, app, id, l.resources.firstOrNull()?.uri.orEmpty(), l.title, l.resources.firstOrNull()?.ext.orEmpty())
                             app.library.get(id) != null -> pushReader(id)
                             else -> toast("That lesson is still being added. Try again in a moment.")
                         }
@@ -246,6 +253,7 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
                             onAppPage = { id -> stack.add(if (id == "learn") Screen.LearnSettings else Screen.VaultNotes) },
                         )
                         is Screen.Template -> TemplateEditorScreen(screen.id, onBack = { pop() })
+                        is Screen.Doc -> DocScreen(screen.req, onBack = { if (stack.last() == screen) pop() })
                         Screen.Review -> ReviewScreen(onBack = { pop() })
                         Screen.Highlights -> HighlightsScreen(onBack = { pop() })
                     }
@@ -269,17 +277,13 @@ private fun depth(s: Screen) = when (s) {
     Screen.Review -> 1
     Screen.Highlights -> 1
     is Screen.Template -> 2
+    is Screen.Doc -> 2
 }
 
-/** Opens a page or document of a lesson in another app. Network files are fetched first. */
-internal fun openFile(ctx: android.content.Context, app: ObsiLearnApp, lessonId: String, uri: String) {
+/** Opens a page or document of a lesson. ObsiLearn shows it itself when it can; other types go to another app. */
+internal fun openFile(ctx: android.content.Context, app: ObsiLearnApp, lessonId: String, uri: String, title: String = "", type: String = "") {
     if (uri.isBlank()) { android.widget.Toast.makeText(ctx, "This lesson has nothing to open.", android.widget.Toast.LENGTH_SHORT).show(); return }
-    val course = app.courses.find(lessonId)?.first
-    app.appScope.launch {
-        val r = runCatching { app.localCopy(course?.sourceId.orEmpty(), uri) }
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-            r.onSuccess { u -> app.openExternally(ctx, u) }
-                .onFailure { e -> android.widget.Toast.makeText(ctx, e.message ?: "Could not open it.", android.widget.Toast.LENGTH_SHORT).show() }
-        }
-    }
+    val name = title.ifBlank { android.net.Uri.decode(uri.substringBefore('?').substringAfterLast('/').substringAfterLast("%2F")).substringBeforeLast('.') }
+    // Always inside the app. The viewer has a button to another app for types it cannot show.
+    DocNav.requests.value = DocRequest(lessonId, uri, name, type)
 }

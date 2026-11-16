@@ -28,6 +28,11 @@ import androidx.compose.foundation.border
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.animation.core.spring
 import androidx.compose.ui.graphics.graphicsLayer
@@ -439,6 +444,51 @@ fun ReaderScreen(videoId: String, onBack: () -> Unit) {
                     leadingIcon = { Icon(Icons.Rounded.Subtitles, null) },
                     onClick = { menu = false; app.transcriber.start(listOf(videoId), redo = transcript != null) },
                 )
+                // Save this lesson on the phone, from here, the same as the course page's lesson menu.
+                val offlineSaved by app.offline.saved.collectAsState()
+                val offlineSaving by app.offline.progress.collectAsState()
+                val lesson = remember(videoId) { app.courses.find(videoId)?.third }
+                val offMode = offlineSaved[videoId]
+                val saving = offlineSaving[videoId]
+                if (lesson != null && lesson.media.isNotBlank()) {
+                    if (saving != null) DropdownMenuItem(
+                        text = { Text(if (saving < 0) "Waiting to save. Tap to stop." else "Saving ${(saving * 100).toInt()}%. Tap to stop.") },
+                        leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                        onClick = { menu = false; app.offline.cancel(videoId) },
+                    ) else {
+                        if (offMode != "video") DropdownMenuItem(
+                            text = { Text("Save for offline") },
+                            leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                            onClick = { menu = false; app.offline.saveAll(listOf(videoId), false) },
+                        )
+                        if (offMode != "audio" && lesson.kind == "video") DropdownMenuItem(
+                            text = { Text("Save audio only") },
+                            leadingIcon = { Icon(Icons.Rounded.Headphones, null) },
+                            onClick = { menu = false; app.offline.saveAll(listOf(videoId), true) },
+                        )
+                        if (offMode != null) DropdownMenuItem(
+                            text = { Text("Remove offline copy") },
+                            leadingIcon = { Icon(Icons.Rounded.DownloadDone, null) },
+                            onClick = { menu = false; app.offline.remove(videoId) },
+                        )
+                    }
+                }
+                // The lesson's own files, shown inside the app.
+                if (lesson != null) {
+                    if (lesson.page.isNotBlank()) DropdownMenuItem(
+                        text = { Text("Lesson page") },
+                        leadingIcon = { Icon(Icons.Rounded.Description, null) },
+                        onClick = { menu = false; openFile(ctx, app, videoId, lesson.page, lesson.title, "html") },
+                    )
+                    lesson.resources.forEach { r ->
+                        DropdownMenuItem(
+                            text = { Text(r.title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                            leadingIcon = { Icon(Icons.Rounded.AttachFile, null) },
+                            trailingIcon = { Text(r.ext.uppercase(), style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant) },
+                            onClick = { menu = false; openFile(ctx, app, videoId, r.uri, r.title, r.ext) },
+                        )
+                    }
+                }
                 DropdownMenuItem(
                     text = { Text("Tags, queue and note") },
                     leadingIcon = { Icon(Icons.Rounded.Sell, null) },

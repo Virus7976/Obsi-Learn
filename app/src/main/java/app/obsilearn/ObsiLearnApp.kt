@@ -219,11 +219,26 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
      */
     fun localCopy(sourceId: String, uri: String): android.net.Uri {
         if (uri.startsWith("content:")) return android.net.Uri.parse(uri)
+        return androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", localFile(sourceId, uri))
+    }
+
+    /** The file on this phone, fetched from its source once and kept in the cache. A saved name keeps its type. */
+    fun localFile(sourceId: String, uri: String): java.io.File {
         val dir = java.io.File(cacheDir, "open").also { it.mkdirs() }
-        val name = android.net.Uri.decode(uri.substringAfterLast('/').substringBefore('?')).replace(Regex("[^A-Za-z0-9._ -]"), "_").ifBlank { "file" }
+        val raw = if (uri.startsWith("content:")) (runCatching {
+            contentResolver.query(android.net.Uri.parse(uri), arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull() ?: uri.substringAfterLast("%2F")) else uri.substringAfterLast('/').substringBefore('?')
+        val name = android.net.Uri.decode(raw).replace(Regex("[^A-Za-z0-9._ -]"), "_").ifBlank { "file" }
         val f = java.io.File(dir, app.obsilearn.data.Layout.id(uri).take(8) + "-" + name)
-        if (!f.exists() || f.length() == 0L) courses.open(sourceId, uri).use { i -> f.outputStream().use { o -> i.copyTo(o) } }
-        return androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", f)
+        if (!f.exists() || f.length() == 0L) {
+            val input = if (uri.startsWith("content:")) contentResolver.openInputStream(android.net.Uri.parse(uri)) ?: error("The file is gone.")
+            else courses.open(sourceId, uri)
+            val tmp = java.io.File(dir, f.name + ".part")
+            input.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+            tmp.renameTo(f)
+        }
+        return f
     }
 
     /** Opens a file in the app that shows it best: a PDF reader, a browser for a page, Office for slides. */
