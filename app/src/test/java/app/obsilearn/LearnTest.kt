@@ -164,3 +164,18 @@ class SourcesParseTest {
     }
 }
 
+
+class SourceErrorsTest {
+    @Test fun anHttpsAddressToAPlainServerIsRetriedAsHttp() {
+        val e = javax.net.ssl.SSLException("Unable to parse TLS packet header")
+        org.junit.Assert.assertEquals("http://192.168.50.137:8081/dav", app.obsilearn.data.SourceErrors.plainHttpFor("https://192.168.50.137:8081/dav", e))
+        org.junit.Assert.assertNull(app.obsilearn.data.SourceErrors.plainHttpFor("http://x", e))
+        org.junit.Assert.assertNull(app.obsilearn.data.SourceErrors.plainHttpFor("https://x", java.io.IOException("reset")))
+        org.junit.Assert.assertEquals("http://x:8080/a", app.obsilearn.data.SourceErrors.plainHttpFor("https://x:8080/a", java.net.SocketTimeoutException("Read timed out")))
+    }
+
+    @Test fun errorsAreSaidInPlainWords() {
+        assertTrue(app.obsilearn.data.SourceErrors.say(java.net.ConnectException("failed")).startsWith("Nothing answered"))
+        assertTrue(app.obsilearn.data.SourceErrors.say(java.io.IOException("x", javax.net.ssl.SSLHandshakeException("Trust anchor for certification path not found."))).contains("not trusted"))
+    }
+}

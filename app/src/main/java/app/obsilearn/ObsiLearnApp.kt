@@ -12,6 +12,7 @@ import app.obsi.core.share.*
 
 import android.app.Application
 import app.obsilearn.data.Library
+import app.obsilearn.data.SourceErrors
 import app.obsi.core.data.PlayQueue
 import app.obsi.core.data.Playlists
 import app.obsi.core.data.SettingsStore
@@ -270,7 +271,7 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         appScope.launch {
             val msg = runCatching { courses.scan(sourceId) }.fold(
                 { n -> if (n == 0) "No lessons found there." else if (n == 1) "Found 1 course." else "Found $n courses." },
-                { e -> e.message ?: "Could not read it." },
+                { e -> SourceErrors.say(e) },
             )
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { done(msg) }
         }

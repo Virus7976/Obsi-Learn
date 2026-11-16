@@ -34,6 +34,36 @@ data class CourseData(val sources: List<Source> = emptyList(), val courses: List
 
 class SourceException(message: String) : Exception(message)
 
+/** Turns what went wrong while reading a source into words a person can act on. */
+object SourceErrors {
+    /** The http address to try, when an https one failed because the server speaks plain http. */
+    fun plainHttpFor(uri: String, e: Throwable?): String? {
+        if (e == null || !uri.startsWith("https://", true)) return null
+        val ssl = generateSequence(e) { it.cause }.any { it is javax.net.ssl.SSLException }
+        val text = generateSequence(e) { it.cause }.mapNotNull { it.message }.joinToString(" ").lowercase()
+        val plain = "tls packet header" in text || "plaintext" in text || "unrecognized ssl message" in text || "wrong version number" in text
+        // A plain http port often says nothing at all to an https hello, so the read times out.
+        val silent = generateSequence(e) { it.cause }.any { it is java.net.SocketTimeoutException }
+        return if ((ssl && plain) || silent) "http://" + uri.substring("https://".length) else null
+    }
+
+    fun say(e: Throwable): String {
+        if (e is SourceException) return e.message ?: "Could not read it."
+        val chain = generateSequence(e) { it.cause }.toList()
+        val text = chain.mapNotNull { it.message }.joinToString(" ").lowercase()
+        return when {
+            chain.any { it is java.net.UnknownHostException } -> "That address was not found. Check it for typing mistakes."
+            chain.any { it is java.net.ConnectException } -> "Nothing answered at that address. Check the address and port, and that the phone is on the same Wi-Fi as the server."
+            chain.any { it is java.net.SocketTimeoutException } -> "The server took too long to answer. Check that it is on, and that the phone is on the same Wi-Fi."
+            "trust anchor" in text || "certpath" in text || chain.any { it is java.security.cert.CertificateException } ->
+                "The server's https certificate is not trusted. Home servers often make their own. Try the same address with http:// instead."
+            "cleartext" in text -> "This copy of ObsiLearn cannot use http. Use https, or update the app."
+            chain.any { it is javax.net.ssl.SSLException } -> "Could not make a secure (https) link to the server. Try the same address with http:// instead."
+            else -> e.message ?: "Could not read it."
+        }
+    }
+}
+
 /** Your sources and the courses found in them. Scanning a source again keeps your progress, by lesson id. */
 class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File(context.filesDir, "courses.json")) {
     private val _state = MutableStateFlow(readOrNull() ?: CourseData())

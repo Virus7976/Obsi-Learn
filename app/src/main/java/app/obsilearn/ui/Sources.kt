@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import app.obsilearn.data.Drive
 import app.obsilearn.data.Layout
 import app.obsilearn.data.Source
+import app.obsilearn.data.SourceErrors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -106,12 +107,20 @@ fun AddSourceSheet(onDismiss: () -> Unit) {
         busy = true; error = null
         app.courses.addSource(s)
         scope.launch {
-            val r = runCatching { app.courses.scan(s.id) }
+            var r = runCatching { app.courses.scan(s.id) }
+            // Many home servers speak plain http. An https address to one of them fails at once, so try http.
+            val plain = SourceErrors.plainHttpFor(s.uri, r.exceptionOrNull())
+            if (plain != null) {
+                app.courses.editSource(s.id) { it.copy(uri = plain) }
+                val again = runCatching { app.courses.scan(s.id) }
+                if (again.isSuccess) say("That server uses http, not https. ObsiLearn changed the address.")
+                r = again
+            }
             busy = false
             r.onSuccess { n ->
                 if (n == 0) { error = "No lessons found there. Check that it has video or audio files."; app.courses.removeSource(s.id) }
                 else { say(if (n == 1) "Added 1 course." else "Added $n courses."); onDismiss() }
-            }.onFailure { e -> error = e.message ?: "Could not read it."; app.courses.removeSource(s.id) }
+            }.onFailure { e -> error = SourceErrors.say(e); app.courses.removeSource(s.id) }
         }
     }
     fun newId(k: String) = k + "-" + System.currentTimeMillis().toString(36)
