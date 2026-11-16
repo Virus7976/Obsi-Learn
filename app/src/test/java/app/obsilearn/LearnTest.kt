@@ -1,6 +1,9 @@
 package app.obsilearn
 
+import app.obsilearn.data.CourseRounds
 import app.obsilearn.data.Entry
+import app.obsilearn.data.Round
+import app.obsilearn.data.Rounds
 import app.obsilearn.data.Feed
 import app.obsilearn.data.Layout
 import app.obsilearn.data.ProgressNotes
@@ -108,6 +111,29 @@ class ProgressNotesTest {
         assertTrue(marks.getValue(l[0].id).done)
         assertEquals(125.0, marks.getValue(l[1].id).pos, 0.0)
         assertEquals(99L, marks.getValue(l[1].id).at)
+    }
+
+    @Test fun theNoteKeepsTheRoundAndHowOftenEachLessonWasWatched() {
+        val l = course.lessons
+        val r = CourseRounds(current = 3, started = 0, past = listOf(Round(1, 0, 1, 3, 3), Round(2, 2, 3, 1, 3)), watches = mapOf(l[0].id to listOf(1L, 2L, 3L)))
+        val text = ProgressNotes.render(course, emptyMap(), "", 0, r)
+        assertEquals(3, ProgressNotes.round(text))
+        assertTrue(text.contains("round: 3\n"))
+        assertTrue(text.contains("- Round 2: 1 of 3 done"))
+        assertTrue(text.contains("watched 3 times"))
+        // A note from before rounds is round 1, and its ticks still read.
+        assertEquals(1, ProgressNotes.round(ProgressNotes.render(course, emptyMap(), "", 0).replace("round: 1\n", "")))
+        assertEquals(3, ProgressNotes.parse(text).size)
+    }
+
+    @Test fun aReplayOfTheEndWithinAnHourIsNotANewWatch() {
+        val r = CourseRounds(watches = mapOf("a" to listOf(1_000L)))
+        // Same rule as Rounds.recordWatch.
+        fun add(r: CourseRounds, now: Long) = r.watches["a"].orEmpty().let { list ->
+            if (list.isNotEmpty() && now - list.last() < Rounds.HOUR) r else r.copy(watches = r.watches + ("a" to list + now))
+        }
+        assertEquals(1, add(r, 1_000L + 60_000L).times("a"))
+        assertEquals(2, add(r, 1_000L + Rounds.HOUR).times("a"))
     }
 
     @Test fun yourOwnNotesUnderTheLineStay() {

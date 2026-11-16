@@ -122,7 +122,12 @@ fun AddSourceSheet(onDismiss: () -> Unit) {
             busy = false
             r.onSuccess { n ->
                 if (n == 0) { error = "No lessons found there. Check that it has video or audio files."; app.courses.removeSource(s.id) }
-                else { say(if (n == 1) "Added 1 course." else "Added $n courses."); onDismiss() }
+                else {
+                    say(if (n == 1) "Added 1 course." else "Added $n courses.")
+                    onDismiss()
+                    // Folders can be read many ways: ask how you want this one shown.
+                    if (s.kind !in setOf("hub", "links", "feed")) SetupNav.open(s.id)
+                }
             }.onFailure { e -> error = SourceErrors.say(e); app.courses.removeSource(s.id) }
         }
     }

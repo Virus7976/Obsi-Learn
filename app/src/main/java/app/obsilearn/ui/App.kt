@@ -69,6 +69,7 @@ sealed interface Screen {
     data object Highlights : Screen
     data class Template(val id: String) : Screen
     data class Doc(val req: DocRequest) : Screen
+    data class Setup(val sourceId: String) : Screen
 }
 
 @Composable
@@ -98,6 +99,9 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
             }
             LaunchedEffect(Unit) {
                 DocNav.requests.collect { r -> if (r != null) { stack.add(Screen.Doc(r)); DocNav.requests.value = null } }
+            }
+            LaunchedEffect(Unit) {
+                SetupNav.requests.collect { id -> if (id != null) { stack.add(Screen.Setup(id)); SetupNav.requests.value = null } }
             }
             val nav = remember {
                 Nav(
@@ -254,6 +258,7 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
                         )
                         is Screen.Template -> TemplateEditorScreen(screen.id, onBack = { pop() })
                         is Screen.Doc -> DocScreen(screen.req, onBack = { if (stack.last() == screen) pop() })
+                        is Screen.Setup -> SetupScreen(screen.sourceId, onDone = { if (stack.last() == screen) pop() })
                         Screen.Review -> ReviewScreen(onBack = { pop() })
                         Screen.Highlights -> HighlightsScreen(onBack = { pop() })
                     }
@@ -278,6 +283,7 @@ private fun depth(s: Screen) = when (s) {
     Screen.Highlights -> 1
     is Screen.Template -> 2
     is Screen.Doc -> 2
+    is Screen.Setup -> 2
 }
 
 /** Opens a page or document of a lesson. ObsiLearn shows it itself when it can; other types go to another app. */

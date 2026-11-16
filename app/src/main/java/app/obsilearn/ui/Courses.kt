@@ -38,10 +38,11 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.VisibilityOff
-import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -71,6 +72,7 @@ import app.obsilearn.ObsiLearnApp
 import app.obsi.core.obsidian.Sender
 import app.obsi.core.obsidian.VaultNotes
 import app.obsilearn.data.Course
+import app.obsilearn.data.CourseRounds
 import app.obsilearn.data.Lesson
 import app.obsilearn.data.Module
 import app.obsilearn.data.ProgressNotes
@@ -196,6 +198,9 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
     val writing by app.transcriber.progress.collectAsState()
     val made by app.transcriber.done.collectAsState()
     val scanning by app.courses.scanning.collectAsState()
+    val allRounds by app.rounds.state.collectAsState()
+    val rounds = allRounds[courseId] ?: CourseRounds()
+    var askRound by remember { mutableStateOf(false) }
     val course = data.courses.firstOrNull { it.id == courseId }
     if (course == null) { androidx.compose.runtime.LaunchedEffect(Unit) { onBack() }; return }
     val byId = remember(videos) { videos.associateBy { it.meta.id } }
@@ -220,6 +225,9 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
                     MenuRow(if (p.done == p.total) "Mark all not done" else "Mark all done", Icons.Rounded.CheckCircle) {
                         menu = false; val all = p.done == p.total; ids.forEach { app.setDone(it, !all) }
                     }
+                    MenuRow("Start a new round", Icons.Rounded.Replay) { menu = false; askRound = true }
+                    if (app.courses.source(course.sourceId)?.kind !in setOf("hub", "links", "feed"))
+                        MenuRow("Change how it is shown", Icons.Rounded.Tune) { menu = false; SetupNav.open(course.sourceId) }
                     MenuRow("Read the source again", Icons.Rounded.Refresh) { menu = false; app.rescan(course.sourceId) { say(it) } }
                     if (ids.any { it in saved }) MenuRow("Remove offline copies", Icons.Rounded.DownloadDone) { menu = false; ids.forEach { app.offline.remove(it) } }
                     MenuRow("Open the course note", Icons.Rounded.Description) {
@@ -232,6 +240,13 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
                 }
             }
         }
+        if (askRound) androidx.compose.material3.AlertDialog(
+            onDismissRequest = { askRound = false },
+            title = { Text("Start round ${rounds.current + 1}?") },
+            text = { Text("Every lesson starts again, not done. Round ${rounds.current} is kept, with ${p.done} of ${p.total} done. Your highlights and notes stay.") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { askRound = false; app.startNewRound(course.id) }) { Text("Start round ${rounds.current + 1}") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { askRound = false }) { Text("Cancel") } },
+        )
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 32.dp)) {
             item("head") {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -239,7 +254,10 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
                         CourseCover(app, course, Modifier.size(88.dp).clip(RoundedCornerShape(18.dp)))
                         Spacer(Modifier.width(16.dp))
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("${p.done} of ${p.total} lessons done", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                (if (rounds.current > 1) "Round ${rounds.current} · " else "") + "${p.done} of ${p.total} lessons done",
+                                style = MaterialTheme.typography.titleSmall,
+                            )
                             Text(
                                 "${course.modules.size} module${if (course.modules.size == 1) "" else "s"} · ${p.percent}%" +
                                     (if (saved.keys.count { it in ids } > 0) " · ${saved.keys.count { it in ids }} offline" else ""),
@@ -249,6 +267,19 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
                         }
                     }
                     LinearProgressIndicator(progress = { p.fraction }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape), drawStopIndicator = {})
+                    if (p.total > 0 && p.done == p.total) {
+                        FilledTonalButton(onClick = { askRound = true }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.Replay, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("You finished it. Watch it again: round ${rounds.current + 1}")
+                        }
+                    }
+                    if (rounds.past.isNotEmpty()) Text(
+                        rounds.past.reversed().joinToString("\n") { r ->
+                            "Round ${r.n}: ${r.done} of ${r.total} done, " + roundDate(r.started) + " to " + roundDate(r.finished)
+                        },
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     p.next?.let { n ->
                         FilledTonalButton(onClick = { nav.openVideo(n.id) }, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.Rounded.PlayArrow, null)
@@ -271,7 +302,7 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
                 if (expanded) {
                     items(m.lessons, key = { "l-" + it.id }) { l ->
                         LessonRow(
-                            app, l, byId[l.id], saved[l.id], saving[l.id], writing[l.id], l.id in hasTranscript,
+                            app, l, byId[l.id], saved[l.id], saving[l.id], writing[l.id], l.id in hasTranscript, rounds.times(l.id),
                             onOpen = { nav.openVideo(l.id) },
                         )
                     }
@@ -281,6 +312,10 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
         }
     }
 }
+
+private fun roundDate(ms: Long): String =
+    java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        .format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy"))
 
 @Composable
 private fun MenuRow(text: String, icon: ImageVector, onClick: () -> Unit) =
@@ -323,6 +358,7 @@ private fun LessonRow(
     saving: Float?,
     writing: Float?,
     hasTranscript: Boolean,
+    watched: Int,
     onOpen: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -358,6 +394,7 @@ private fun LessonRow(
                 if (writing != null) add(if (writing < 0) "Waiting for transcript" else "Transcript ${(writing * 100).toInt()}%")
                 val n = v?.highlights?.size ?: 0
                 if (n > 0) add("$n highlight" + if (n == 1) "" else "s")
+                if (watched > 1) add("Watched $watched times")
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (hasTranscript) Icon(Icons.Rounded.Subtitles, "Has a transcript", Modifier.size(14.dp), tint = scheme.onSurfaceVariant)

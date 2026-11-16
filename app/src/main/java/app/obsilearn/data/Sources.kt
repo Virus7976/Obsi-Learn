@@ -132,7 +132,7 @@ class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File
                 "hub" -> Hub.courses(this@CourseStore, s)
                 "links" -> listOf(linksCourse(s))
                 "feed" -> listOf(Feed.course(http, s))
-                else -> Layout.courses(s, entries(s))
+                else -> entries(s).also { lastEntries[sourceId] = it }.let { Layout.courses(s, it) }
             }
             _state.update { d ->
                 val old = d.courses.associateBy { it.id }
@@ -149,6 +149,18 @@ class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File
             _scanning.update { it - sourceId }
         }
     }
+
+    /** The files of each source from its last scan, so the setup can show a choice at once, without reading again. */
+    private val lastEntries = java.util.concurrent.ConcurrentHashMap<String, List<Entry>>()
+
+    /** What the courses would look like with [s]'s choices. Null when the files are not known yet. */
+    fun preview(s: Source): List<Course>? = when (s.kind) {
+        "hub", "links", "feed" -> null
+        else -> lastEntries[s.id]?.let { Layout.courses(s, it) }
+    }
+
+    /** Whether the source has folders under its courses, so module choices mean something. */
+    fun depth(sourceId: String): Int = lastEntries[sourceId]?.filter { Layout.isMedia(it) }?.maxOfOrNull { it.folders.size } ?: 0
 
     suspend fun scanAll() { _state.value.sources.forEach { runCatching { scan(it.id) } } }
 

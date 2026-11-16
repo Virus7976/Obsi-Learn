@@ -21,6 +21,17 @@ data class Source(
     val addedAt: Long = 0L,
     /** False: every folder with modules in it is its own course. True: the whole source is one course. */
     val oneCourse: Boolean = false,
+    /**
+     * How folders become modules. "folders": every folder is a module (sub-folders get "Parent / Child").
+     * "top": only the first folder level; sub-folders join their parent. "none": one list, no modules.
+     */
+    val modules: String = "folders",
+    /** True: every PDF, page or document is a reading lesson of its own, not a file of the video with its number. */
+    val docsAsLessons: Boolean = false,
+    /** Your own names for courses, by course id. */
+    val titles: Map<String, String> = emptyMap(),
+    /** False until you went through the setup for this source. */
+    val setUp: Boolean = true,
 )
 
 @Serializable
@@ -165,21 +176,30 @@ object Layout {
         val cover = files.filter { it.ext in imageExt && it.folders.size <= 1 }
             .sortedBy { if (it.base.lowercase() in coverNames) 0 else 1 }
             .firstOrNull { it.base.lowercase() in coverNames || it.folders.isEmpty() }?.uri.orEmpty()
-        val modules = files.groupBy { it.folders }
+        // The module a file is in, after your choice of how folders become modules.
+        fun key(folders: List<String>): List<String> = when (source.modules) {
+            "none" -> emptyList()
+            "top" -> folders.take(1)
+            else -> folders
+        }
+        val modules = files.groupBy { key(it.folders) }
             .toSortedMap { a, b -> natural.compare(a.joinToString("/"), b.joinToString("/")) }
             .mapNotNull { (folders, list) ->
-                val lessons = lessons(source, root + folders, list)
+                // Lessons are found folder by folder, so numbers in two folders do not mix, then kept in folder order.
+                val lessons = list.groupBy { it.folders }
+                    .toSortedMap { a, b -> natural.compare(a.joinToString("/"), b.joinToString("/")) }
+                    .flatMap { (real, part) -> lessons(source, root + real, part) }
                 val loose = list.filter { (it.ext in docExt) && lessons.none { l -> l.resources.any { r -> r.uri == it.uri } || l.media == it.uri } }
                     .map { Resource(title(it.base), it.uri, it.ext, it.size) }
                 if (lessons.isEmpty() && loose.isEmpty()) null
                 else Module(
                     id = id(courseId, folders.joinToString("/")),
-                    title = if (folders.isEmpty()) "Lessons" else folders.joinToString(" / ") { title(it) },
+                    title = if (folders.isEmpty()) (if (source.modules == "none") title(name) else "Lessons") else folders.joinToString(" / ") { title(it) },
                     lessons = lessons,
                     resources = loose,
                 )
             }
-        return Course(courseId, source.id, title(name), modules, cover, now)
+        return Course(courseId, source.id, source.titles[courseId]?.takeIf { it.isNotBlank() } ?: title(name), modules, cover, now)
     }
 
     /** Groups one folder's files into lessons. */
@@ -203,7 +223,7 @@ object Layout {
         for (m in media) {
             val sub = near(m, subs).sortedBy { if (it.base.equals(m.base, true)) 0 else 1 }.firstOrNull()
             val page = near(m, pages).firstOrNull()
-            val res = near(m, docs)
+            val res = if (source.docsAsLessons) emptyList() else near(m, docs)
             listOfNotNull(sub, page).forEach { used += it.uri }
             res.forEach { used += it.uri }
             used += m.uri
@@ -220,9 +240,9 @@ object Layout {
             )
         }
         // A numbered page or document with no video is a reading lesson of its own.
-        if (byNumber || media.isEmpty()) {
-            val reading = (pages + docs).filter { it.uri !in used && (number(it.name) != null || media.isEmpty() && it.ext in pageExt) }
-                .groupBy { number(it.name) ?: it.base.hashCode() }
+        if (byNumber || media.isEmpty() || source.docsAsLessons) {
+            val reading = (pages + docs).filter { it.uri !in used && (source.docsAsLessons || number(it.name) != null || media.isEmpty() && it.ext in pageExt) }
+                .groupBy { if (source.docsAsLessons) it.base.hashCode() else number(it.name) ?: it.base.hashCode() }
             for ((_, group) in reading) {
                 val main = group.firstOrNull { it.ext in pageExt } ?: group.first()
                 group.forEach { used += it.uri }

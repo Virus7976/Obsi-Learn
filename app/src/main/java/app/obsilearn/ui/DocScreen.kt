@@ -127,7 +127,7 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
         // A lesson that is only reading is done when you say so.
         if (lesson != null && lesson.media.isBlank()) {
             Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.End) {
-                FilledTonalButton(onClick = { app.setDone(req.lessonId, !done) }) {
+                FilledTonalButton(onClick = { if (done) app.setDone(req.lessonId, false) else { app.setDone(req.lessonId, true); app.finished(req.lessonId) } }) {
                     Icon(Icons.Rounded.TaskAlt, null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (done) "Done" else "Mark as done")

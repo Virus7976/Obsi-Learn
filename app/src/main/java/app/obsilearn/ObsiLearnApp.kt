@@ -54,6 +54,8 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
     lateinit var offline: app.obsilearn.data.Offline
         private set
     lateinit var reviews: app.obsilearn.data.Reviews
+    /** Each watch-through of a course. */
+    lateinit var rounds: app.obsilearn.data.Rounds
         private set
 
     val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
@@ -95,6 +97,7 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         updates = SelfUpdate(this, settings)
         library = Library(this)
         reviews = app.obsilearn.data.Reviews(this)
+        rounds = app.obsilearn.data.Rounds(this)
         playlists = Playlists(this)
         queue = PlayQueue(settings)
         learn = app.obsilearn.data.LearnSettingsStore(this)
@@ -114,8 +117,8 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
             }
         }
         watchProgressNotes()
-        player.onEnded = { player.state.value.videoId?.let { markWatched(it); autoClip(it) }; playNextInQueue() }
-        player.onWatched = { markWatched(it); autoClip(it) }
+        player.onEnded = { player.state.value.videoId?.let { finished(it); autoClip(it) }; playNextInQueue() }
+        player.onWatched = { finished(it); autoClip(it) }
         player.onPosition = { id, sec -> library.edit(id) { it.copy(positionSec = sec, playedAt = System.currentTimeMillis()) } }
         // The reminder alarm follows the settings.
         appScope.launch {
@@ -171,7 +174,7 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     private fun watchProgressNotes() {
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            kotlinx.coroutines.flow.combine(library.videos, player.state.map { it.playing }.distinctUntilChanged(), learn.state) { v: List<app.obsilearn.data.SavedVideo>, playing: Boolean, l: app.obsilearn.data.LearnSettings -> Triple(v, playing, l) }
+            kotlinx.coroutines.flow.combine(library.videos, player.state.map { it.playing }.distinctUntilChanged(), learn.state, rounds.state) { v: List<app.obsilearn.data.SavedVideo>, playing: Boolean, l: app.obsilearn.data.LearnSettings, _: Any -> Triple(v, playing, l) }
                 .debounce(2500L)
                 .collect { (videos, playing, l) ->
                     if (!l.progressNotes) return@collect
@@ -180,12 +183,12 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
                         val sig = c.lessons.joinToString(",") { les ->
                             val v = byId[les.id]
                             (if (v?.done == true) "x" else "") + ((v?.positionSec ?: 0.0) / 10).toInt() + "/" + (v?.highlights?.size ?: 0)
-                        } + c.title
+                        } + c.title + "/r" + rounds.of(c.id).let { it.current.toString() + ":" + it.watches.values.sumOf { w -> w.size } }
                         if (written[c.id] == sig) continue
                         // While it plays, only a lesson that just got done is worth a write.
                         val before = written[c.id]
                         if (playing && before != null && before.count { it == 'x' } == sig.count { it == 'x' }) continue
-                        if (app.obsilearn.data.ProgressNotes.write(this@ObsiLearnApp, settings.value, l.notesFolder, c, byId)) written[c.id] = sig
+                        if (app.obsilearn.data.ProgressNotes.write(this@ObsiLearnApp, settings.value, l.notesFolder, c, byId, rounds.of(c.id))) written[c.id] = sig
                     }
                 }
         }
@@ -198,6 +201,15 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
             val byId = library.videos.value.associateBy { it.meta.id }
             for (c in courses.courses) {
                 val text = app.obsilearn.data.ProgressNotes.read(this@ObsiLearnApp, settings.value, learn.value.notesFolder, c) ?: continue
+                // Rounds: an older note's ticks belong to a round that is over. A newer one means another phone started again.
+                val noteRound = app.obsilearn.data.ProgressNotes.round(text)
+                val here = rounds.of(c.id).current
+                if (noteRound < here) continue
+                if (noteRound > here) {
+                    rounds.catchUp(c.id, noteRound, c.lessons.count { byId[it.id]?.done == true }, c.lessons.size)
+                    c.lessons.forEach { les -> library.edit(les.id) { it.copy(doneAt = 0L, positionSec = 0.0) } }
+                    continue
+                }
                 val changes = app.obsilearn.data.ProgressNotes.merge(app.obsilearn.data.ProgressNotes.parse(text), byId)
                 for ((id, m) in changes) {
                     // The lesson playing now keeps its own place.
@@ -305,6 +317,21 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
     fun setDone(id: String, done: Boolean) {
         if (done) { markWatched(id); queue.remove(id) }
         else library.edit(id) { it.copy(doneAt = 0L) }
+    }
+
+    /** A lesson was watched or read to the end: done, and one more watch in its course's history. */
+    fun finished(id: String) {
+        markWatched(id)
+        courses.find(id)?.first?.let { rounds.recordWatch(it.id, id) }
+    }
+
+    /** Starts the course again: every lesson not done and back at the start. The round before is kept. */
+    fun startNewRound(courseId: String) {
+        val c = courses.courses.firstOrNull { it.id == courseId } ?: return
+        val done = c.lessons.count { library.get(it.id)?.done == true }
+        rounds.startNew(courseId, done, c.lessons.size)
+        val now = System.currentTimeMillis()
+        c.lessons.forEach { l -> library.edit(l.id) { it.copy(doneAt = 0L, positionSec = 0.0, playedAt = now) } }
     }
 
     /** A video was watched to the end. It counts as done, and leaves every playlist that is set to drop watched videos. */
