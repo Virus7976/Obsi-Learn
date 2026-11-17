@@ -29,6 +29,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.TaskAlt
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -101,6 +103,15 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
                 Text(req.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 lesson?.takeIf { it.title != req.title }?.let { Text(it.title, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
+            if (ext == "pdf") {
+                val learn by app.learn.state.collectAsState()
+                IconButton(onClick = { app.learn.update { it.copy(darkPdf = !it.darkPdf) } }) {
+                    Icon(
+                        if (learn.darkPdf) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                        if (learn.darkPdf) "Show the PDF light" else "Show the PDF dark",
+                    )
+                }
+            }
             IconButton(onClick = {
                 file?.getOrNull()?.let { app.openExternally(ctx, androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".files", it)) }
             }) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open in another app") }
@@ -141,6 +152,8 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
 @Composable
 private fun PdfPages(file: File) {
     val scheme = MaterialTheme.colorScheme
+    val dark = LocalApp.current.learn.state.collectAsState().value.darkPdf
+    val filter = remember(dark) { if (dark) androidx.compose.ui.graphics.ColorFilter.colorMatrix(darkMatrix()) else null }
     val opened = remember(file) {
         runCatching {
             val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -194,8 +207,8 @@ private fun PdfPages(file: File) {
                         }
                     }
                 }
-                Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).aspectRatio(w.toFloat() / h).clip(RoundedCornerShape(4.dp)).background(Color.White)) {
-                    bmp?.let { Image(it.asImageBitmap(), "Page ${i + 1}", Modifier.fillMaxSize()) }
+                Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).aspectRatio(w.toFloat() / h).clip(RoundedCornerShape(4.dp)).background(if (dark) Color(0xFF1A1A1A) else Color.White)) {
+                    bmp?.let { Image(it.asImageBitmap(), "Page ${i + 1}", Modifier.fillMaxSize(), colorFilter = filter) }
                 }
             }
         }
@@ -207,6 +220,35 @@ private fun PdfPages(file: File) {
             style = MaterialTheme.typography.labelMedium,
         )
     }
+}
+
+/**
+ * Dark PDF pages: flip light and dark, then turn the colours half way round so red stays red and blue stays blue.
+ * White paper becomes a soft black, not pure black, so it is easy on the eyes.
+ */
+private fun darkMatrix(): androidx.compose.ui.graphics.ColorMatrix {
+    val invert = androidx.compose.ui.graphics.ColorMatrix(floatArrayOf(
+        -1f, 0f, 0f, 0f, 255f,
+        0f, -1f, 0f, 0f, 255f,
+        0f, 0f, -1f, 0f, 255f,
+        0f, 0f, 0f, 1f, 0f,
+    ))
+    val hue = androidx.compose.ui.graphics.ColorMatrix(floatArrayOf(
+        -0.574f, 1.430f, 0.144f, 0f, 0f,
+        0.426f, 0.430f, 0.144f, 0f, 0f,
+        0.426f, 1.430f, -0.856f, 0f, 0f,
+        0f, 0f, 0f, 1f, 0f,
+    ))
+    // Lift black a little and keep white text a little soft: 0..255 maps to 26..230.
+    val soften = androidx.compose.ui.graphics.ColorMatrix(floatArrayOf(
+        0.8f, 0f, 0f, 0f, 26f,
+        0f, 0.8f, 0f, 0f, 26f,
+        0f, 0f, 0.8f, 0f, 26f,
+        0f, 0f, 0f, 1f, 0f,
+    ))
+    hue.timesAssign(invert)
+    soften.timesAssign(hue)
+    return soften
 }
 
 /** A lesson page (.html) or a text file, in a web view with the app's dark colours for text. */

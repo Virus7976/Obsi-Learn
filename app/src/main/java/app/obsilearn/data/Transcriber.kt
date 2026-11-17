@@ -37,6 +37,8 @@ import java.util.concurrent.TimeUnit
 /** ObsiLearn's own settings, apart from the ones all Obsi apps share. */
 @Serializable
 data class LearnSettings(
+    /** PDFs shown dark: the page turned to black, the text to light, colours kept close. */
+    val darkPdf: Boolean = true,
     /** "phone" (offline, free) or "cloud" (your own key, fast and exact). */
     val engine: String = "phone",
     /** Which speech model the phone uses. A key of [Transcriber.phoneModels]. */
