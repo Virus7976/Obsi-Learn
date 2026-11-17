@@ -140,6 +140,12 @@ class Transcriber(
 
     private suspend fun transcribe(id: String): TranscriptData {
         val (course, _, lesson) = store.find(id) ?: error("That lesson is gone.")
+        // A podcast can put in different ads each time it is downloaded, so a transcript of one download
+        // drifts against another. Save it first: the transcript and the player then use the same copy.
+        if (store.source(course.sourceId)?.kind in setOf("feed", "links") && offline.localStreams(id) == null) {
+            report(id, 0f)
+            if (!offline.saveNow(id)) error("Could not save the episode to make its transcript. Check the connection.")
+        }
         // The copy on the phone is fastest and works with the source gone.
         val local = offline.localStreams(id)
         val (url, headers) = if (local != null) local.audioUrl to emptyMap() else store.playable(course.sourceId, lesson.media)

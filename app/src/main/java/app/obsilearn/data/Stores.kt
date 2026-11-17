@@ -73,10 +73,14 @@ class Library(private val context: Context) :
         persist(_state.value)
     }
 
-    fun remove(id: String) {
-        _state.update { list -> list.filterNot { it.meta.id == id } }
+    fun remove(id: String) = removeAll(setOf(id))
+
+    /** Many at once, with one write. */
+    fun removeAll(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        _state.update { list -> list.filterNot { it.meta.id in ids } }
         persist(_state.value)
-        File(transcriptDir(), "$id.json").delete()
+        ids.forEach { File(transcriptDir(), "$it.json").delete() }
     }
 
     private fun transcriptDir() = File(context.filesDir, "transcripts").also { it.mkdirs() }

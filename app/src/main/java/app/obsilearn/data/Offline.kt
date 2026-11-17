@@ -143,6 +143,28 @@ class Offline(private val context: Context, private val store: CourseStore) {
         }
     }
 
+    /**
+     * Saves one lesson's sound now and waits, for the transcriber: an audio lesson as audio, a video as video.
+     * Returns false when it could not be saved.
+     */
+    suspend fun saveNow(id: String): Boolean {
+        if (localStreams(id) != null) return true
+        val lesson = store.find(id)?.third ?: return false
+        if (lesson.media.isBlank()) return false
+        val mode = if (lesson.kind == "video") "video" else "audio"
+        lock.lock()
+        try {
+            if (localStreams(id) != null) return true
+            _progress.update { it + (id to -1f) }
+            val ok = runCatching { save(id, mode == "audio") }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.isSuccess
+            if (ok) _saved.update { it + (id to mode) }
+            return ok
+        } finally {
+            _progress.update { it - id }
+            lock.unlock()
+        }
+    }
+
     fun cancel(id: String) { jobs.remove(id)?.cancel(); _progress.update { it - id } }
 
     private suspend fun save(id: String, audioOnly: Boolean) {

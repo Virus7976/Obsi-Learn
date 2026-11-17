@@ -233,6 +233,16 @@ class PlayerHost(
         begin(id, title, author, startSec, force || settings().autoPlay)
     }
 
+    /**
+     * The lesson that plays from the network was just saved on the phone: go on from the saved copy,
+     * at the same second. A made transcript fits that copy, and it needs no network.
+     */
+    fun moveToSaved(id: String) {
+        val s = _state.value
+        if (s.videoId != id || s.via == "saved" || s.loading || s.error != null) return
+        begin(id, s.title, s.author, exo.currentPosition / 1000.0, exo.playWhenReady)
+    }
+
     fun retry() {
         val s = _state.value
         val id = s.videoId ?: return

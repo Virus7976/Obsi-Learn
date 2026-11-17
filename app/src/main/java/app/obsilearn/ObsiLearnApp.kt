@@ -128,7 +128,15 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         player = PlayerHost(this, app.obsilearn.data.LessonStreams(courses) { offline }) { settings.value }
         player.artworkFor = { id -> library.get(id)?.meta?.image?.let { img -> if (img.startsWith("hub")) courses.find(id)?.let { courses.playable(it.first.sourceId, img).first } else img } }
         // Every lesson has a place in the library, so search, highlights and review work for all of them.
-        appScope.launch { courses.state.collect { library.sync(lessonMetas()) } }
+        appScope.launch { courses.state.collect { d -> val metas = lessonMetas(); library.sync(metas); dropLeftLessons(metas, d.sources.isEmpty()) } }
+
+        // A lesson saved while it plays goes on from the saved copy.
+        appScope.launch {
+            offline.saved.collect { saved ->
+                val id = player.state.value.videoId ?: return@collect
+                if (id in saved && offline.localStreams(id) != null) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { player.moveToSaved(id) }
+            }
+        }
 
         // Time spent, for the shared stats: counted while something plays, in the app or in the background.
         appScope.launch {
@@ -192,6 +200,30 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
                     link = "obsilearn://lesson/" + l.id, image = c.cover, course = c.title, module = m.title,
                 )
             }
+        }
+    }
+
+    /**
+     * A lesson whose show or course you removed leaves the library, so search and lists stop finding it.
+     * A lesson with something you made (highlights, tags, a pin, a playlist) stays.
+     */
+    private suspend fun dropLeftLessons(metas: List<app.obsilearn.data.VideoMeta>, noSources: Boolean) {
+        // No lessons while sources exist means the courses did not load. Then remove nothing.
+        if (metas.isEmpty() && !noSources) return
+        val live = metas.mapTo(HashSet()) { it.id }
+        val inPlaylist = playlists.all.value.flatMapTo(HashSet()) { it.videoIds }
+        val gone = library.videos.value.filter { v ->
+            v.meta.link.startsWith("obsilearn://lesson/") && v.meta.id !in live &&
+                v.highlights.isEmpty() && v.tags.isEmpty() && !v.pinned && v.playlistId.isEmpty() && v.meta.id !in inPlaylist
+        }
+        if (gone.isEmpty()) return
+        // The player must be stopped on the main thread.
+        val ids = gone.mapTo(HashSet()) { it.meta.id }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            if (player.state.value.videoId in ids) player.stop()
+            queue.ids.value.filter { it in ids }.forEach { queue.remove(it) }
+            ids.forEach { offline.remove(it) }
+            library.removeAll(ids)
         }
     }
 
