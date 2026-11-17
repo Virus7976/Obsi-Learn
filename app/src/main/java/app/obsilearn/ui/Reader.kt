@@ -249,7 +249,7 @@ fun ReaderScreen(videoId: String, onBack: () -> Unit) {
             runCatching {
                 val (course, _, lesson) = app.courses.find(videoId) ?: return@runCatching null
                 if (lesson.subs.isBlank()) null
-                else Transcripts.parseSubtitles(app.courses.readText(course.sourceId, lesson.subs)).takeIf { it.cues.isNotEmpty() }
+                else Transcripts.parseAny(app.courses.readText(course.sourceId, lesson.subs)).takeIf { it.cues.isNotEmpty() }
             }
         }
         val data = found.getOrNull()

@@ -53,20 +53,60 @@ object Feed {
             Lesson(
                 id = Layout.id(s.id, it.url), title = it.title.ifBlank { Uri.parse(it.url).lastPathSegment.orEmpty() },
                 media = it.url, kind = if (it.type.startsWith("video")) "video" else "audio", size = it.size, file = it.url.substringAfterLast('/'),
+                subs = it.transcript, published = it.published, duration = it.duration, summary = it.summary,
             )
         }
         return Course(Layout.id(s.id, ""), s.id, parsed.title.ifBlank { s.name }, listOf(Module(Layout.id(s.id, "m"), "Episodes", lessons)), parsed.image, System.currentTimeMillis())
     }
 
-    data class Item(val title: String, val url: String, val type: String, val size: Long)
+    data class Item(
+        val title: String, val url: String, val type: String, val size: Long,
+        val published: Long = 0L, val duration: Int = 0, val summary: String = "",
+        /** The show's own transcript of the episode (Podcasting 2.0), when it is a file the reader can use. */
+        val transcript: String = "",
+    )
     data class Parsed(val title: String, val image: String, val items: List<Item>)
 
     private fun tag(block: String, name: String): String =
         Regex("""<$name\b[^>]*>(.*?)</$name>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)).find(block)?.groupValues?.get(1)
-            ?.replace(Regex("""^\s*<!\[CDATA\[|]]>\s*$"""), "")?.replace("&amp;", "&")?.trim().orEmpty()
+            ?.replace(Regex("""^\s*<!\[CDATA\[|]]>\s*$"""), "")
+            // Entities like &#39; and &amp; back to letters. Some feeds escape twice, so "&amp;#39;" too.
+            ?.let { org.jsoup.parser.Parser.unescapeEntities(org.jsoup.parser.Parser.unescapeEntities(it, false), false) }
+            ?.trim().orEmpty()
 
     private fun attr(tagText: String, name: String): String =
         Regex("""\b$name\s*=\s*["']([^"']*)["']""", RegexOption.IGNORE_CASE).find(tagText)?.groupValues?.get(1)?.replace("&amp;", "&").orEmpty()
+
+    /** The best transcript the feed gives for one episode: WebVTT first, then SRT, then the JSON form. */
+    private fun transcript(block: String): String {
+        val all = Regex("""<podcast:transcript\b[^>]*>""", RegexOption.IGNORE_CASE).findAll(block).map { it.value }.toList()
+        fun pick(vararg types: String) = all.firstOrNull { t -> types.any { attr(t, "type").contains(it, true) } }?.let { attr(it, "url") }
+        return pick("vtt") ?: pick("srt", "subrip") ?: pick("json") ?: ""
+    }
+
+    /** "Tue, 12 Nov 2024 06:00:00 +0000" or "2024-11-12T06:00:00Z" as milliseconds. 0 when it cannot be read. */
+    fun date(text: String): Long {
+        val t = text.trim()
+        if (t.isEmpty()) return 0L
+        runCatching { return java.time.ZonedDateTime.parse(t, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() }
+        runCatching { return java.time.OffsetDateTime.parse(t).toInstant().toEpochMilli() }
+        // Some feeds write a zone name, like "GMT" or "PST", or leave out the day name.
+        runCatching {
+            val f = java.time.format.DateTimeFormatter.ofPattern("[EEE, ]d MMM yyyy HH:mm[:ss] [zzz][Z]", java.util.Locale.ENGLISH)
+            return java.time.ZonedDateTime.parse(t, f).toInstant().toEpochMilli()
+        }
+        return 0L
+    }
+
+    /** "1:02:03", "45:10" or "2710" as seconds. */
+    fun duration(text: String): Int {
+        val p = text.trim().split(':').mapNotNull { it.trim().toDoubleOrNull() }
+        if (p.isEmpty()) return 0
+        return p.fold(0.0) { acc, n -> acc * 60 + n }.toInt()
+    }
+
+    /** Text from an HTML summary: tags out, entities back to letters, spaces tidied. */
+    private fun plain(html: String): String = runCatching { org.jsoup.Jsoup.parse(html).text() }.getOrDefault(html).trim()
 
     fun parse(xml: String): Parsed {
         val items = Regex("""<(item|entry)\b.*?</\1>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)).findAll(xml).mapNotNull { m ->
@@ -76,7 +116,13 @@ object Feed {
                 ?: return@mapNotNull null
             val url = attr(enc, "url").ifBlank { attr(enc, "href") }
             if (url.isBlank()) return@mapNotNull null
-            Item(tag(b, "title"), url, attr(enc, "type"), attr(enc, "length").toLongOrNull() ?: 0L)
+            Item(
+                tag(b, "title"), url, attr(enc, "type"), attr(enc, "length").toLongOrNull() ?: 0L,
+                published = date(tag(b, "pubDate").ifBlank { tag(b, "published") }.ifBlank { tag(b, "updated") }),
+                duration = duration(tag(b, "itunes:duration")),
+                summary = plain(tag(b, "itunes:summary").ifBlank { tag(b, "description") }.ifBlank { tag(b, "summary") }).take(600),
+                transcript = transcript(b),
+            )
         }.toList()
         val head = xml.substringBefore("<item").substringBefore("<entry")
         val image = Regex("""<itunes:image\b[^>]*>""", RegexOption.IGNORE_CASE).find(head)?.value?.let { attr(it, "href") }

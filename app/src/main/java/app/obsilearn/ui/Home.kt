@@ -1,5 +1,7 @@
 package app.obsilearn.ui
 
+import app.obsi.core.ui.rememberOtherHits
+import app.obsi.core.ui.rememberOthersDue
 import app.obsi.core.data.Transcripts
 
 import app.obsi.core.*
@@ -49,6 +51,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Podcasts
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.rounded.Add
@@ -138,7 +141,11 @@ fun HomeScreen(
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     var addInitial by remember { mutableStateOf<String?>(null) }
     val courseData by app.courses.state.collectAsState()
-    val courseList = remember(courseData) { app.courses.courses }
+    // Podcasts have their own tab, so the Courses tab leaves them out.
+    val courseList = remember(courseData) { app.courses.courses.filter { !isPodcast(app, it) } }
+    val shows = remember(courseData) { podcastShows(app) }
+    var openShow by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    var addPodcastOpen by remember { mutableStateOf(false) }
     val byId = remember(videos) { videos.associateBy { it.meta.id } }
     val nav = LocalNav.current
 
@@ -150,7 +157,8 @@ fun HomeScreen(
     val playlists by app.playlists.all.collectAsState()
     val queue by app.queue.ids.collectAsState()
     val reviewCards by app.reviews.cards.collectAsState()
-    val dueCount = remember(videos, reviewCards) { app.reviews.due(videos).size }
+    val othersDue = rememberOthersDue()
+    val dueCount = remember(videos, reviewCards) { app.reviews.due(videos).size } + othersDue
 
     LaunchedEffect(incoming) { if (incoming != null) onConsumed() }
 
@@ -163,14 +171,23 @@ fun HomeScreen(
     val showFeed = false
     val showQueue = tab == "queue"
     val showFiles = tab == "files"
+    val showPodcasts = tab == "podcasts"
+    // New episodes are fetched when the tab opens, at most every ten minutes.
+    LaunchedEffect(showPodcasts) {
+        if (showPodcasts && System.currentTimeMillis() - lastPodcastCheck > 10 * 60_000L) {
+            lastPodcastCheck = System.currentTimeMillis()
+            app.courses.state.value.sources.filter { it.kind == "feed" }.forEach { runCatching { app.courses.scan(it.id) } }
+        }
+    }
     var fileKind by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
     val courseState by app.courses.state.collectAsState()
     val savedOffline by app.offline.saved.collectAsState()
     val allFiles = remember(courseState) { courseFiles(app.courses.courses) }
     OnChanged(tab) { query = ""; page = null }
-    androidx.activity.compose.BackHandler(enabled = query.isNotEmpty() || page != null || openPlaylist != null) {
+    androidx.activity.compose.BackHandler(enabled = query.isNotEmpty() || page != null || openPlaylist != null || (showPodcasts && openShow != null)) {
         when {
             query.isNotEmpty() -> query = ""
+            showPodcasts && openShow != null -> openShow = null
             openPlaylist != null -> openPlaylist = null
             else -> page = null
         }
@@ -317,6 +334,12 @@ fun HomeScreen(
                 onOpen = { f -> openFile(ctx, app, f.lessonId, f.uri, f.title, f.ext) },
             )
 
+            if (showPodcasts) podcastsTab(
+                shows = shows, byId = byId, open = openShow, onOpenShow = { openShow = it }, onPlay = onOpen,
+                onAdd = { addPodcastOpen = true },
+                onRemove = { s -> openShow = null; app.courses.removeSource(s.source.id) },
+            )
+
             if (showQueue) queueTab(
                 queue = if (query.isBlank()) queue else queue.filter { id -> videos.firstOrNull { it.meta.id == id }?.matchesQuery(query) == true },
                 videos = videos, nowId = if (query.isBlank()) nowId else null, onOpenVideo = onOpen,
@@ -378,6 +401,10 @@ fun HomeScreen(
         }
         }
 
+        if (addPodcastOpen) AddPodcastSheet(
+            onDismiss = { addPodcastOpen = false },
+            onAdded = { id -> addPodcastOpen = false; openShow = app.courses.courses.firstOrNull { it.sourceId == id }?.id },
+        )
         if (newPlaylistOpen) NewPlaylistDialog(
             onDismiss = { newPlaylistOpen = false },
             onCreate = { name -> app.playlists.create(name); newPlaylistOpen = false },
@@ -685,6 +712,7 @@ private fun tabIcon(id: String) = when (id) {
     "feed" -> Icons.Rounded.Subscriptions
     "queue" -> Icons.Rounded.QueueMusic
     "files" -> Icons.Rounded.Folder
+    "podcasts" -> Icons.Rounded.Podcasts
     else -> Icons.Rounded.VideoLibrary
 }
 
@@ -772,3 +800,6 @@ private fun SectionHeader(title: String, count: Int, always: Boolean = false, li
         else Spacer(Modifier.height(48.dp))
     }
 }
+
+/** When the Podcasts tab last asked the feeds for new episodes, so switching tabs does not ask again. */
+private var lastPodcastCheck = 0L

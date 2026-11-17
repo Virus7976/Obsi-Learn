@@ -60,6 +60,12 @@ data class Lesson(
     val size: Long = 0L,
     /** The file name, so a person can find it. */
     val file: String = "",
+    /** A podcast episode's date, in milliseconds. 0 for course lessons. */
+    val published: Long = 0L,
+    /** How long it plays, in seconds, when the feed says. 0 when not known. */
+    val duration: Int = 0,
+    /** A podcast episode's short text from the feed, without HTML. */
+    val summary: String = "",
 )
 
 @Serializable

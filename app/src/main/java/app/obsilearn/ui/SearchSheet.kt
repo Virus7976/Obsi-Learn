@@ -1,5 +1,7 @@
 package app.obsilearn.ui
 
+import app.obsi.core.ui.rememberOtherHits
+import app.obsi.core.ui.rememberOthersDue
 import app.obsi.core.data.Transcripts
 
 import app.obsi.core.*
@@ -111,6 +113,8 @@ fun LibrarySearchSheet(onDismiss: () -> Unit, onOpenPlaylist: (String) -> Unit) 
             LibrarySearch.search(query, videos, playlists, place = { v, s -> app.placeOf(v.meta.id, s) }) + inside
         }
     }
+    // The other Obsi apps answer too, so one search finds everything.
+    val others = rememberOtherHits(query)
     val counts = all.groupingBy { it.kind }.eachCount()
     val shown = if (filter == null || counts[filter] == null) all else all.filter { it.kind == filter }
 
@@ -164,7 +168,7 @@ fun LibrarySearchSheet(onDismiss: () -> Unit, onOpenPlaylist: (String) -> Unit) 
                     videosWithHighlights = videos,
                     onOpen = ::open,
                 )
-            } else if (shown.isEmpty()) {
+            } else if (shown.isEmpty() && others.isEmpty()) {
                 Text(
                     "Nothing matches \"${query.trim()}\". Try fewer letters, or a word from the note.",
                     Modifier.padding(24.dp), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
@@ -174,6 +178,7 @@ fun LibrarySearchSheet(onDismiss: () -> Unit, onOpenPlaylist: (String) -> Unit) 
                     items(shown, key = { it.kind.name + "|" + it.videoId + "|" + it.sec + "|" + it.ref + "|" + it.title }) { h ->
                         HitRow(h) { open(h) }
                     }
+                    otherAppsResults(others, query)
                 }
             }
         }

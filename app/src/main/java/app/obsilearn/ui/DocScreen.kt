@@ -75,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.obsi.core.data.ArticleDoc
+import app.obsi.core.ui.CountTime
 import app.obsilearn.ObsiLearnApp
 import app.obsilearn.data.DocHtml
 import app.obsilearn.data.DocText
@@ -157,6 +158,8 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
         else -> "text"
     }
     val showText = mode == "text" && r?.built != null
+    // Reading a file counts as time spent, for the shared stats.
+    CountTime(item = lesson?.title ?: req.title)
 
     Column(Modifier.fillMaxSize().background(scheme.surface).statusBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
