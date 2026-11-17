@@ -21,7 +21,7 @@ object WebFolder {
         fun walk(url: String, path: List<String>, depth: Int) {
             if (depth > 6 || !seen.add(url)) return
             val html = http.newCall(Request.Builder().url(url).build()).execute().use { r ->
-                if (!r.isSuccessful) throw SourceException("The page said ${r.code}.")
+                if (!r.isSuccessful) throw SourceException(SourceErrors.http(r.code, "The page"))
                 r.body!!.string()
             }
             for (m in href.findAll(html)) {
@@ -45,7 +45,7 @@ object WebFolder {
 object Feed {
     fun course(http: OkHttpClient, s: Source): Course {
         val xml = http.newCall(Request.Builder().url(s.uri.trim()).header("User-Agent", "ObsiLearn").build()).execute().use { r ->
-            if (!r.isSuccessful) throw SourceException("The feed said ${r.code}.")
+            if (!r.isSuccessful) throw SourceException(SourceErrors.http(r.code, "The feed"))
             r.body!!.string()
         }
         val parsed = parse(xml)
@@ -124,7 +124,7 @@ object Drive {
                 .build().toString()
             val body = http.newCall(Request.Builder().url(url).header("Authorization", "Bearer $token").build()).execute().use { r ->
                 if (r.code == 401) throw SourceException("Sign in with Google again: Sources, then Google Drive.")
-                if (!r.isSuccessful) throw SourceException("Google Drive said ${r.code}.")
+                if (!r.isSuccessful) throw SourceException(SourceErrors.http(r.code, "Google Drive"))
                 r.body!!.string()
             }
             val o = json.parseToJsonElement(body).jsonObject

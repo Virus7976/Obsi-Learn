@@ -36,6 +36,42 @@ class SourceException(message: String) : Exception(message)
 
 /** Turns what went wrong while reading a source into words a person can act on. */
 object SourceErrors {
+    const val WEBDAV_OFF = "The NAS answered, but not as WebDAV. WebDAV may be off, or this is the address of its web page. " +
+        "Turn WebDAV on (QNAP: Control Panel, then Network & File Services, then WebDAV. Synology: Package Center, then WebDAV Server), " +
+        "or use the shared-folder (SMB) form: smb://192.168.1.10/share/folder"
+
+    /**
+     * Tidies an address the way people type it: backslash paths (\\NAS\share) become smb://, a share
+     * address with %20 gets its real spaces back, and a web address gets %20 for its spaces.
+     */
+    fun cleanAddress(s: Source): Source {
+        if (s.kind != "webdav" && s.kind != "smb") return s
+        var u = s.uri.trim().trim('"', '\'', '<', '>')
+        if (u.startsWith("\\\\") || (u.contains('\\') && !u.contains("://"))) u = "smb://" + u.replace('\\', '/').trimStart('/')
+        u = u.replace('\\', '/')
+        if (u.startsWith("smb://", true) || (s.kind == "smb" && !u.startsWith("http", true))) {
+            u = Uri.decode(u)
+            if (!u.startsWith("smb://", true)) u = "smb://" + u.trimStart('/')
+        } else if (u.startsWith("http", true)) {
+            u = u.replace(" ", "%20")
+        } else if (s.kind == "webdav" && Regex("""^[\w.-]+(:\d+)?/""").containsMatchIn(u)) {
+            u = "http://" + u.replace(" ", "%20")
+        }
+        return s.copy(uri = u)
+    }
+
+    /** The same folder as an SMB share: for a NAS whose WebDAV is off. The web port is dropped. */
+    fun smbFor(s: Source): Source? {
+        val u = Uri.parse(s.uri)
+        val host = u.host ?: return null
+        val path = Uri.decode(u.encodedPath.orEmpty()).trim('/')
+        if (path.isBlank()) return null
+        return s.copy(kind = "smb", id = s.id.replaceFirst("webdav", "smb"), uri = "smb://$host/$path")
+    }
+
+    /** True when a failure looks like a server that does not speak WebDAV at that address. */
+    fun notWebDav(e: Throwable?): Boolean = e is SourceException && e.message == WEBDAV_OFF
+
     /** A WebDAV or SMB source whose address belongs to the other kind, switched to that kind. */
     fun kindFor(s: Source): Source {
         val u = s.uri.trim().lowercase()
@@ -60,6 +96,8 @@ object SourceErrors {
     fun say(e: Throwable): String {
         if (e is SourceException) return e.message ?: "Could not read it."
         val chain = generateSequence(e) { it.cause }.toList()
+        // Google sign-in: say what happened, not a status number.
+        chain.firstNotNullOfOrNull { it as? com.google.android.gms.common.api.ApiException }?.let { return drive(it.statusCode) }
         val text = chain.mapNotNull { it.message }.joinToString(" ").lowercase()
         return when {
             chain.any { it is java.net.UnknownHostException } -> "That address was not found. Check it for typing mistakes."
@@ -69,8 +107,24 @@ object SourceErrors {
                 "The server's https certificate is not trusted. Home servers often make their own. Try the same address with http:// instead."
             "cleartext" in text -> "This copy of ObsiLearn cannot use http. Use https, or update the app."
             chain.any { it is javax.net.ssl.SSLException } -> "Could not make a secure (https) link to the server. Try the same address with http:// instead."
+            chain.any { it is jcifs.smb.SmbAuthException } -> "The share did not take that user name and password."
+            chain.any { it is java.io.FileNotFoundException } || "cannot find the file" in text || "not found" in text ->
+                "That file or folder is not there any more. It may have been moved or renamed. Scan the source again in Sources."
             else -> e.message ?: "Could not read it."
         }
+    }
+
+    /** A web server's answer code, in words: the same words as every Obsi app. */
+    fun http(code: Int, who: String = "The server"): String = app.obsi.core.data.HttpWords.say(code, who)
+
+    /** Google's sign-in status, in words. */
+    fun drive(status: Int): String = when (status) {
+        10 -> "Google Drive sign-in is not set up for this copy of ObsiLearn yet. That is one step for the app's maker (a sign-in key in Google Cloud). " +
+            "Until then: in the Google Drive app, make the course folder available offline, then add it here as a folder on this phone."
+        7 -> "No internet. Connect, then try again."
+        12501, 16 -> "Sign-in was closed before it finished. Try again and pick your account."
+        8, 13 -> "Google had a problem. Try again in a minute."
+        else -> "Google did not sign you in (code $status). Try again."
     }
 }
 
@@ -235,7 +289,7 @@ class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File
         val (url, headers) = playable(sourceId, uri)
         val req = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
         val r = http.newCall(req).execute()
-        if (!r.isSuccessful) { r.close(); throw SourceException("The server said ${r.code}.") }
+        if (!r.isSuccessful) { r.close(); throw SourceException(SourceErrors.http(r.code)) }
         return r.body!!.byteStream()
     }
 
@@ -249,7 +303,7 @@ class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File
         val req = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
         http.newCall(req).execute().use { r ->
             if (r.code == 401 || r.code == 403) throw SourceException("Wrong pairing code.")
-            if (!r.isSuccessful) throw SourceException("The hub said ${r.code}.")
+            if (!r.isSuccessful) throw SourceException(SourceErrors.http(r.code, "The hub"))
             return json.parseToJsonElement(r.body!!.string()).jsonObject
         }
     }
@@ -272,8 +326,14 @@ object WebDav {
                 .build()
             val xml = http.newCall(req).execute().use { r ->
                 if (r.code == 401) throw SourceException("The server did not take that user name and password.")
-                if (!r.isSuccessful) throw SourceException("The server said ${r.code}.")
-                r.body!!.string()
+                if (r.code == 404) throw SourceException(if (depth == 0) "That folder is not on the server. Check the path after the address, letter for letter." else SourceErrors.WEBDAV_OFF)
+                // A server with WebDAV off answers PROPFIND with "not allowed", or with its web page.
+                if (r.code == 405 || r.code == 501 || r.code == 400) throw SourceException(SourceErrors.WEBDAV_OFF)
+                if (!r.isSuccessful) throw SourceException(SourceErrors.http(r.code))
+                val text = r.body!!.string()
+                if (r.header("Content-Type").orEmpty().contains("html", true) || (text.contains("<html", true) && !text.contains("multistatus", true)))
+                    throw SourceException(SourceErrors.WEBDAV_OFF)
+                text
             }
             val here = Uri.parse(url).encodedPath.orEmpty().trimEnd('/')
             for (item in parse(xml)) {

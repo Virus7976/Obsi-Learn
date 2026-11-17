@@ -80,6 +80,7 @@ fun VaultNotesScreen(onBack: () -> Unit) {
             "One note per course, nothing more. Transcripts stay in the app. Highlights go to your vault only when you save them.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        SwitchLine("Go on to the next lesson", "When a lesson ends, the next one starts. A reading lesson waits for you to open it.", l.autoNext) { v -> app.learn.update { it.copy(autoNext = v) } }
         SwitchLine("Course notes", "Keep each course's progress in your vault, so it syncs.", l.progressNotes) { v -> app.learn.update { it.copy(progressNotes = v) } }
         OutlinedTextField(
             l.notesFolder, { v -> app.learn.update { it.copy(notesFolder = v.trim('/').ifBlank { "ObsiLearn" }) } },

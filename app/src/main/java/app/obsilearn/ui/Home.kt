@@ -49,6 +49,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.ui.graphics.graphicsLayer
@@ -153,13 +154,19 @@ fun HomeScreen(
 
     LaunchedEffect(incoming) { if (incoming != null) onConsumed() }
 
-    val visibleTabs = settings.homeTabs.filter { it in HomeTabs.keys }.ifEmpty { listOf("library") }
+    // The Files tab took the place of Up next: a course has its own order, so a hand-made queue had little to do.
+    val visibleTabs = settings.homeTabs.map { if (it == "queue") "files" else it }.distinct().filter { it in HomeTabs.keys }.ifEmpty { listOf("library") }
     var tab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(visibleTabs.first()) }
     if (tab !in visibleTabs) tab = visibleTabs.first()
     tabRequest?.let { if (it in visibleTabs) tab = it; tabRequest = null }
     val showLibrary = tab == "library" || visibleTabs.size == 1
     val showFeed = false
     val showQueue = tab == "queue"
+    val showFiles = tab == "files"
+    var fileKind by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
+    val courseState by app.courses.state.collectAsState()
+    val savedOffline by app.offline.saved.collectAsState()
+    val allFiles = remember(courseState) { courseFiles(app.courses.courses) }
     OnChanged(tab) { query = ""; page = null }
     androidx.activity.compose.BackHandler(enabled = query.isNotEmpty() || page != null || openPlaylist != null) {
         when {
@@ -276,9 +283,15 @@ fun HomeScreen(
                 }
             }
 
+            // The streak and this week, from every Obsi app on the phone.
+            if (browsing) item("stats") {
+                StatsCard(nav.openStats, Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp))
+            }
+
             // The search icon covers everything you saved. A box here is only for a long list of this one kind.
             val listSize = when {
                 showQueue -> queue.size
+                showFiles -> allFiles.size
                 inPlaylist -> playlists.firstOrNull { it.id == openPlaylist }?.videoIds?.size ?: 0
                 page == "playlists" -> playlists.size
                 page == "resume" -> resumeAll.size
@@ -290,11 +303,19 @@ fun HomeScreen(
                     query, { query = it },
                     when {
                         showQueue -> "Search the queue"
+                        showFiles -> "Search the files"
                         openPlaylist != null -> "Search this playlist"
                         else -> "Search this list"
                     },
                 )
             }
+
+            if (showFiles) filesTab(
+                files = if (query.isBlank()) allFiles else allFiles.filter { it.title.contains(query, true) || it.lessonTitle.contains(query, true) || it.course.title.contains(query, true) },
+                items = videos.associateBy { it.meta.id }, fileId = app::fileId, offline = savedOffline.keys,
+                kind = fileKind, onKind = { fileKind = it },
+                onOpen = { f -> openFile(ctx, app, f.lessonId, f.uri, f.title, f.ext) },
+            )
 
             if (showQueue) queueTab(
                 queue = if (query.isBlank()) queue else queue.filter { id -> videos.firstOrNull { it.meta.id == id }?.matchesQuery(query) == true },
@@ -424,12 +445,7 @@ private fun NowPlayingBar(modifier: Modifier, onOpen: (String) -> Unit) {
         ) {
             Row(Modifier.padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 // A video is a wide picture. A circle would cut most of it away.
-                AsyncImage(
-                    model = nowId?.let { "https://i.ytimg.com/vi/$it/mqdefault.jpg" },
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.height(40.dp).aspectRatio(16 / 9f).clip(RoundedCornerShape(20.dp)),
-                )
+                LessonArt(nowId, Modifier.height(40.dp).aspectRatio(16 / 9f).clip(RoundedCornerShape(20.dp)))
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(player.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
                     Text(player.author, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -473,12 +489,7 @@ private fun PreviewCard(
     ) {
         Column {
             Box {
-                AsyncImage(
-                    model = meta.thumb,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().aspectRatio(16 / 9f).clip(MaterialTheme.shapes.extraLarge),
-                )
+                LessonArt(meta.id, Modifier.fillMaxWidth().aspectRatio(16 / 9f).clip(MaterialTheme.shapes.extraLarge))
                 if (meta.durationSec > 0) {
                     Text(
                         Transcripts.formatTime(meta.durationSec.toDouble()),
@@ -536,13 +547,7 @@ private fun VideoRow(v: SavedVideo, onMore: (String) -> Unit, onClick: () -> Uni
             .padding(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = v.meta.thumb,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.width(116.dp).aspectRatio(16 / 9f).clip(RoundedCornerShape(radius)),
-            alpha = if (v.done) 0.5f else 1f,
-        )
+        LessonArt(v.meta.id, Modifier.width(116.dp).aspectRatio(16 / 9f).clip(RoundedCornerShape(radius)), alpha = if (v.done) 0.5f else 1f)
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(v.meta.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
             Text(v.meta.author, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -600,10 +605,7 @@ private fun VideoCard(v: SavedVideo, onMore: (String) -> Unit, pinned: Boolean =
         }, onClick = onClick),
     ) {
         Box {
-            AsyncImage(
-                model = v.meta.thumb, contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth().aspectRatio(16 / 9f).clip(RoundedCornerShape(18.dp)),
-            )
+            LessonArt(v.meta.id, Modifier.fillMaxWidth().aspectRatio(16 / 9f).clip(RoundedCornerShape(18.dp)))
             if (pinned) Icon(
                 Icons.Rounded.PushPin, null, Modifier.align(Alignment.TopStart).padding(8.dp).size(16.dp),
                 tint = androidx.compose.ui.graphics.Color.White,
@@ -682,6 +684,7 @@ private fun BottomTabs(ids: List<String>, selected: String, queueCount: Int, onS
 private fun tabIcon(id: String) = when (id) {
     "feed" -> Icons.Rounded.Subscriptions
     "queue" -> Icons.Rounded.QueueMusic
+    "files" -> Icons.Rounded.Folder
     else -> Icons.Rounded.VideoLibrary
 }
 
@@ -704,7 +707,7 @@ private fun ContinueRow(v: SavedVideo, onMore: (String) -> Unit, onDone: (String
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(116.dp).aspectRatio(16 / 9f).clip(RoundedCornerShape(16.dp))) {
-            AsyncImage(model = v.meta.thumb, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            LessonArt(v.meta.id, Modifier.fillMaxSize())
             // The line sits on the picture, like YouTube, so the row stays one clean shape.
             Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(androidx.compose.ui.graphics.Color(0x66FFFFFF))) {
                 Box(Modifier.fillMaxWidth(frac).height(3.dp).background(scheme.primary))
@@ -713,7 +716,15 @@ private fun ContinueRow(v: SavedVideo, onMore: (String) -> Unit, onDone: (String
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(v.meta.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
             Text(
-                listOf(if (minutes <= 1) "Almost done" else "$minutes min left", v.meta.author).filter { it.isNotBlank() }.joinToString("  ·  "),
+                listOf(
+                    when {
+                        v.meta.isFile -> if (v.meta.words > 0) "Reading · ${(v.positionSec * 100 / v.meta.words).toInt().coerceIn(0, 100)}% in" else "Reading"
+                        total <= 0 -> "Stopped at " + Transcripts.formatTime(v.positionSec)
+                        minutes <= 1 -> "1 min left"
+                        else -> "$minutes min left"
+                    },
+                    v.meta.author,
+                ).filter { it.isNotBlank() }.joinToString("  ·  "),
                 Modifier.padding(top = 2.dp), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
             )

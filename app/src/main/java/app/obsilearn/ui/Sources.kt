@@ -1,5 +1,6 @@
 package app.obsilearn.ui
 
+import app.obsi.core.data.HttpWords
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -106,7 +107,9 @@ fun AddSourceSheet(onDismiss: () -> Unit) {
     fun add(given: Source) {
         busy = true; error = null
         // The address says what it is. An smb:// address in the WebDAV form is a share, and the other way round.
-        val s = SourceErrors.kindFor(given)
+        // Typed forms are tidied first: \\NAS\share, %20 in a share address, spaces in a web address.
+        val s = SourceErrors.kindFor(SourceErrors.cleanAddress(given))
+        var s0 = s
         if (s.kind != given.kind) say(if (s.kind == "smb") "That is a shared-folder (SMB) address, so ObsiLearn uses it as one." else "That is a web address, so ObsiLearn uses WebDAV.")
         app.courses.addSource(s)
         scope.launch {
@@ -119,9 +122,20 @@ fun AddSourceSheet(onDismiss: () -> Unit) {
                 if (again.isSuccess) say("That server uses http, not https. ObsiLearn changed the address.")
                 r = again
             }
+            // A NAS with WebDAV off often has the same folder as a shared folder. Try that before giving up.
+            if (s.kind == "webdav" && SourceErrors.notWebDav(r.exceptionOrNull())) {
+                SourceErrors.smbFor(s)?.let { smb ->
+                    app.courses.removeSource(s.id)
+                    app.courses.addSource(smb)
+                    val again = runCatching { app.courses.scan(smb.id) }
+                    if (again.isSuccess) { say("WebDAV is off on that NAS, so ObsiLearn opened the same folder as a shared folder (SMB)."); s0 = smb; r = again }
+                    else app.courses.removeSource(smb.id)
+                }
+            }
             busy = false
+            val s = s0
             r.onSuccess { n ->
-                if (n == 0) { error = "No lessons found there. Check that it has video or audio files."; app.courses.removeSource(s.id) }
+                if (n == 0) { error = "No lessons found there. Check that it has video, audio or document files, and that you picked the course folder."; app.courses.removeSource(s.id) }
                 else {
                     say(if (n == 1) "Added 1 course." else "Added $n courses.")
                     onDismiss()
@@ -260,16 +274,14 @@ private fun DrivePicker(busy: Boolean, onPick: (id: String, name: String) -> Uni
                 val pi = r.pendingIntent
                 if (r.hasResolution() && pi != null) consent.launch(IntentSenderRequest.Builder(pi.intentSender).build()) else token = r.accessToken
             }
-            .addOnFailureListener { e ->
-                error = "Google sign-in is not set up for this copy of ObsiLearn yet. " + (e.message?.take(120) ?: "")
-            }
+            .addOnFailureListener { e -> error = SourceErrors.say(e) }
     }
     LaunchedEffect(Unit) { signIn() }
     LaunchedEffect(token, path) {
         val t = token ?: return@LaunchedEffect
         folders = null
         folders = runCatching { withContext(Dispatchers.IO) { Drive.children(app.courses.http, t, path.last().first).filter { it.folder } } }
-            .onFailure { error = it.message }.getOrNull().orEmpty()
+            .onFailure { error = SourceErrors.say(it) }.getOrNull().orEmpty()
     }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
     if (token == null) {

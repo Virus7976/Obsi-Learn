@@ -48,6 +48,8 @@ object ProgressNotes {
 
     /** The whole note. [videos] are the lessons' saved state, by id. */
     fun render(course: Course, videos: Map<String, SavedVideo>, tail: String, now: Long, rounds: CourseRounds = CourseRounds()): String = buildString {
+        // Highlights in a lesson's PDFs and documents count for that lesson.
+        val fileMarks = videos.values.filter { it.meta.isFile }.groupBy { it.meta.parent }.mapValues { (_, l) -> l.sumOf { it.highlights.size } }
         val all = course.lessons
         val done = all.count { videos[it.id]?.done == true }
         val pct = if (all.isEmpty()) 0 else done * 100 / all.size
@@ -80,7 +82,7 @@ object ProgressNotes {
                 if (pos >= 5 && v?.done != true) append("?t=").append(pos.toInt())
                 append(")")
                 if (pos >= 5 && v?.done != true) append(" · ").append(Transcripts.formatTime(pos))
-                val n = v?.highlights?.size ?: 0
+                val n = (v?.highlights?.size ?: 0) + (fileMarks[l.id] ?: 0)
                 if (n > 0) append(" · ").append(n).append(if (n == 1) " highlight" else " highlights")
                 val w = rounds.times(l.id)
                 if (w > 1) append(" · watched ").append(w).append(" times")

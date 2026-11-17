@@ -88,6 +88,9 @@ class LayoutTest {
     @Test fun titlesAreCleaned() {
         assertEquals("Six Figure Fusion - Week 1 Business Genesis (START)", Layout.title("3. 1.3._Six_Figure_Fusion_-_Week_1_Business_Genesis_(START)_·_Imperium_Academy"))
         assertEquals("Welcome Guide", Layout.title("01. (PDF) Welcome Guide"))
+        assertEquals("Charlie Morgan - Imperium Academy™ VIP", Layout.title("Charlie Morgan - Imperium Academy™ VIP www.udcourse.net"))
+        assertEquals("Sales Course", Layout.title("Sales Course [coursesite.com]"))
+        assertEquals("Node.js Basics", Layout.title("Node.js Basics"))
     }
 }
 

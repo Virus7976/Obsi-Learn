@@ -25,7 +25,17 @@ data class VideoMeta(
     /** The course and module the lesson is in. [author] holds the course too, for the shared screens. */
     val course: String = "",
     val module: String = "",
+    /** For a lesson's file: the lesson it belongs to. Blank for a lesson. */
+    val parent: String = "",
+    /** For a lesson's file: where the file is, and its type. */
+    val file: String = "",
+    val ext: String = "",
+    /** For a lesson's file: how many words its text has, so a place reads as "40% in". */
+    val words: Int = 0,
 ) {
+    /** A PDF, page or document of a lesson, not a lesson itself. */
+    val isFile: Boolean get() = file.isNotBlank()
+
     val url: String get() = link.ifBlank { "obsilearn://lesson/$id" }
     val thumb: String get() = image
 }

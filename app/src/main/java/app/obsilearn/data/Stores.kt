@@ -81,6 +81,9 @@ class Library(private val context: Context) :
 
     private fun transcriptDir() = File(context.filesDir, "transcripts").also { it.mkdirs() }
 
+    /** When a transcript was last written, or 0 when there is none. */
+    fun transcriptStamp(id: String): Long = File(transcriptDir(), "$id.json").lastModified()
+
     fun saveTranscript(id: String, data: TranscriptData) {
         runCatching {
             File(transcriptDir(), "$id.json").writeText(storeJson.encodeToString(TranscriptData.serializer(), data))

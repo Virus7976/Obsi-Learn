@@ -382,7 +382,7 @@ fun VideoActionsSheet(videoId: String, inPlaylist: Boolean = false, pending: Vid
 fun RemoveVideoDialog(onKeep: () -> Unit, onRemove: () -> Unit) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onKeep,
-        title = { Text("Remove this video?") },
+        title = { Text("Remove this lesson?") },
         text = { Text("Its highlights and saved audio are removed from this phone. Your Obsidian note stays.") },
         confirmButton = { TextButton(onClick = onRemove) { Text("Remove") } },
         dismissButton = { TextButton(onClick = onKeep) { Text("Keep") } },
@@ -579,7 +579,7 @@ private fun PlaylistHeader(p: Playlist, onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                Text("Remove videos as I watch them", style = MaterialTheme.typography.bodyLarge)
+                Text("Remove lessons as I finish them", style = MaterialTheme.typography.bodyLarge)
                 Text("When one plays to the end, it leaves this playlist.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             androidx.compose.material3.Switch(checked = p.removeWhenWatched, onCheckedChange = { app.playlists.setRemoveWhenWatched(p.id, it) })
@@ -613,7 +613,7 @@ private fun PlaylistHeader(p: Playlist, onBack: () -> Unit) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirm = false },
             title = { Text("Delete this playlist?") },
-            text = { Text("Videos with highlights stay in your library. The others are removed.") },
+            text = { Text("Lessons with highlights stay. The others are removed.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirm = false
@@ -651,7 +651,7 @@ fun LazyListScope.queueTab(queue: List<String>, videos: List<SavedVideo>, nowId:
     if (rows.isEmpty()) {
         item("q-empty") {
             Text(
-                "Nothing is waiting. Open the ⋮ menu on a video and choose Add to queue. When a video ends, the next one starts.",
+                "Nothing is waiting. Open the ⋮ menu on a lesson and choose Add to queue. When a lesson ends, the next one starts.",
                 Modifier.padding(24.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -737,7 +737,7 @@ private fun videoNote(application: app.obsilearn.ObsiLearnApp, v: SavedVideo): P
 fun openVideoNote(ctx: android.content.Context, application: app.obsilearn.ObsiLearnApp, v: SavedVideo): Boolean {
     val found = videoNote(application, v)
     if (found == null) {
-        android.widget.Toast.makeText(ctx, "No note yet. Clip this video first.", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(ctx, "No note yet. Save this lesson to Obsidian first.", android.widget.Toast.LENGTH_SHORT).show()
         return false
     }
     val (vault, path) = found

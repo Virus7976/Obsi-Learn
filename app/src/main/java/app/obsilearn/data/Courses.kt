@@ -122,13 +122,21 @@ object Layout {
     fun number(name: String): Int? = leadNum.find(name)?.groupValues?.get(1)?.toIntOrNull()
 
     /** A readable title from a file or folder name. */
+    private val WEB_ADDRESS = Regex(
+        """[\[(]?\s*(?:https?://\S+|www\.\S+|\b[a-z0-9-]+\.(?:com|net|org|io|co|me|ru|to|cc|info|xyz|site|online|club|biz|ws)\b(?:/\S*)?)\s*[\])]?""",
+        RegexOption.IGNORE_CASE,
+    )
+
     fun title(name: String): String {
         var s = name.replace('_', ' ')
         s = s.replace(Regex("""^\s*\d{1,4}\s*[.\-)]*\s*"""), "")
         s = s.replace(Regex("""^\s*\d+(\.\d+)+\.?\s*"""), "") // "1.3. Title"
         s = s.replace(Regex("""\((?:PDF|DOC|DOCX|PPT|PPTX|XLSX|VIDEO|AUDIO)\)\s*""", RegexOption.IGNORE_CASE), "")
         s = s.replace(Regex("""\s*·\s*[^·]+$"""), "") // "Title · Site name" from saved web pages
-        s = s.replace(Regex("""\s+"""), " ").trim().trim('-', '–', '—', ' ')
+        // Web addresses that download sites add to folder names: "Course www.site.net", "[site.com]".
+        s = s.replace(WEB_ADDRESS, " ")
+        s = s.replace(Regex("""[\[(]\s*[\])]"""), " ") // brackets left empty
+        s = s.replace(Regex("""\s+"""), " ").trim().trim('-', '–', '—', '|', ' ')
         return s.ifBlank { name.trim() }
     }
 

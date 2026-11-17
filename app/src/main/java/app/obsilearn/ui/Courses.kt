@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AttachFile
@@ -136,7 +137,7 @@ private fun NoCourses(onAdd: () -> Unit) {
             Icon(Icons.Rounded.School, null, Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
             Text("Add your first course", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Pick where your videos are: a folder on this phone, an SD card or USB stick, Google Drive, a NAS, a PC, or a link.",
+                "Pick where your courses are: a folder on this phone, an SD card or USB stick, Google Drive, a NAS, a PC, or a link.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             FilledTonalButton(onClick = onAdd) { Text("Add a course") }
@@ -221,6 +222,7 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
                     MenuRow("Save all for offline", Icons.Rounded.Download) { menu = false; app.offline.saveAll(ids, audioOnly = false) }
                     MenuRow("Save all as audio only", Icons.Rounded.Headphones) { menu = false; app.offline.saveAll(ids, audioOnly = true) }
                     MenuRow("Make all transcripts", Icons.Rounded.Subtitles) { menu = false; app.transcriber.start(ids) }
+                    MenuRow("Make files searchable", Icons.Rounded.Search) { menu = false; say("Reading the course files…"); app.indexFiles(course.id) { say(it) } }
                     HorizontalDivider()
                     MenuRow(if (p.done == p.total) "Mark all not done" else "Mark all done", Icons.Rounded.CheckCircle) {
                         menu = false; val all = p.done == p.total; ids.forEach { app.setDone(it, !all) }
@@ -389,7 +391,7 @@ private fun LessonRow(
                     dur > 0 -> add(Transcripts.formatTime(dur.toDouble()))
                 }
                 if (l.kind == "audio") add("Audio")
-                if (offlineMode == "video") add("Offline") else if (offlineMode == "audio") add("Offline audio")
+                if (offlineMode == "video" || offlineMode == "files") add("Offline") else if (offlineMode == "audio") add("Offline audio")
                 if (saving != null) add(if (saving < 0) "Waiting to save" else "Saving ${(saving * 100).toInt()}%")
                 if (writing != null) add(if (writing < 0) "Waiting for transcript" else "Transcript ${(writing * 100).toInt()}%")
                 val n = v?.highlights?.size ?: 0
@@ -408,6 +410,10 @@ private fun LessonRow(
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "Lesson options") }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                if (l.media.isBlank() && (l.page.isNotBlank() || l.resources.isNotEmpty())) {
+                    if (offlineMode == null) MenuRow("Save for offline", Icons.Rounded.Download) { menu = false; app.offline.saveAll(listOf(l.id), false) }
+                    else MenuRow("Remove offline copy", Icons.Rounded.DownloadDone) { menu = false; app.offline.remove(l.id) }
+                }
                 if (l.media.isNotBlank()) {
                     if (offlineMode != "video") MenuRow("Save for offline", Icons.Rounded.Download) { menu = false; app.offline.saveAll(listOf(l.id), false) }
                     if (offlineMode != "audio" && l.kind == "video") MenuRow("Save audio only", Icons.Rounded.Headphones) { menu = false; app.offline.saveAll(listOf(l.id), true) }

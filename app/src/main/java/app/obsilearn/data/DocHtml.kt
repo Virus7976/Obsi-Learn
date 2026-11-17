@@ -19,8 +19,11 @@ object DocHtml {
 
     fun canShow(ext: String) = ext in known
 
-    fun build(file: File, ext: String, dark: Boolean): String? {
-        val body = when (ext) {
+    fun build(file: File, ext: String, dark: Boolean): String? = body(file, ext)?.let { page(it, dark) }
+
+    /** The file as HTML, without the page around it. Null for a type this cannot read. */
+    fun body(file: File, ext: String): String? {
+        return when (ext) {
             in images -> "<img class=solo src=\"${android.net.Uri.fromFile(file)}\">"
             "md", "markdown" -> markdown(file.readText())
             "csv" -> table(file.readLines().map { splitCsv(it, ',') })
@@ -31,9 +34,8 @@ object DocHtml {
             "odt" -> odt(file)
             "epub" -> epub(file)
             in texts -> "<pre>" + esc(file.readText()) + "</pre>"
-            else -> return null
+            else -> null
         }
-        return page(body, dark)
     }
 
     fun page(body: String, dark: Boolean): String {

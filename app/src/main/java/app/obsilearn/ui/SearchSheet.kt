@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.QueueMusic
@@ -97,7 +98,18 @@ fun LibrarySearchSheet(onDismiss: () -> Unit, onOpenPlaylist: (String) -> Unit) 
 
     val all by produceState(emptyList<Hit>(), query, videos, playlists) {
         delay(30)
-        value = withContext(Dispatchers.Default) { LibrarySearch.search(query, videos, playlists) }
+        value = withContext(Dispatchers.Default) {
+            val titled = videos.associateBy { it.meta.id }
+            // Inside transcripts and files: the phrase as you typed it.
+            val inside = runCatching { app.textIndex.search(query, videos) }.getOrDefault(emptyList()).mapNotNull { f ->
+                val v = titled[f.id] ?: return@mapNotNull null
+                Hit(
+                    HitKind.Text, v.meta.title, app.placeOf(f.id, f.at), snippet = f.snippet,
+                    snippetMatch = f.matchStart until (f.matchStart + f.matchLen), score = 30.0, videoId = f.id, sec = f.at,
+                )
+            }
+            LibrarySearch.search(query, videos, playlists, place = { v, s -> app.placeOf(v.meta.id, s) }) + inside
+        }
     }
     val counts = all.groupingBy { it.kind }.eachCount()
     val shown = if (filter == null || counts[filter] == null) all else all.filter { it.kind == filter }
@@ -106,7 +118,7 @@ fun LibrarySearchSheet(onDismiss: () -> Unit, onOpenPlaylist: (String) -> Unit) 
         if (query.isNotBlank()) app.settings.update { it.copy(recentSearches = (listOf(query.trim()) + it.recentSearches).distinct().take(12)) }
         when (h.kind) {
             HitKind.Video -> nav.openVideo(h.videoId)
-            HitKind.Highlight -> {
+            HitKind.Highlight, HitKind.Text -> {
                 // Start the reader at the highlight. A video that is already playing is moved there now.
                 app.library.edit(h.videoId) { it.copy(positionSec = h.sec) }
                 if (app.player.state.value.videoId == h.videoId) app.player.seekTo(h.sec)
@@ -126,7 +138,7 @@ fun LibrarySearchSheet(onDismiss: () -> Unit, onOpenPlaylist: (String) -> Unit) 
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Rounded.Search, null) },
                 trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, "Clear") } },
-                placeholder = { Text("Search videos, highlights, notes", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                placeholder = { Text("Search lessons, highlights, notes and files", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 shape = MaterialTheme.shapes.extraLarge,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { shown.firstOrNull()?.let { open(it) } }),
@@ -171,6 +183,7 @@ fun LibrarySearchSheet(onDismiss: () -> Unit, onOpenPlaylist: (String) -> Unit) 
 private fun kindLabel(k: HitKind) = when (k) {
     HitKind.Video -> "Videos"
     HitKind.Highlight -> "Highlights"
+    HitKind.Text -> "Inside"
     HitKind.Playlist -> "Playlists"
 }
 
@@ -183,6 +196,7 @@ private fun EmptyState(
     onOpen: (Hit) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val app = LocalApp.current
     // The newest highlights, so the box is useful before you type anything.
     val latest = remember(videosWithHighlights) {
         videosWithHighlights.flatMap { v -> v.highlights.filter { it.text.isNotBlank() || it.note.isNotBlank() }.map { h -> v to h } }
@@ -190,7 +204,7 @@ private fun EmptyState(
             .take(6)
             .map { (v, h) ->
                 Hit(
-                    HitKind.Highlight, v.meta.title, Transcripts.formatTime(h.startSec),
+                    HitKind.Highlight, v.meta.title, app.placeOf(v.meta.id, h.startSec),
                     snippet = h.text.ifBlank { h.note }.take(140), videoId = v.meta.id, sec = h.startSec, color = h.color,
                 )
             }
@@ -236,10 +250,11 @@ private fun HitRow(h: Hit, onClick: () -> Unit) {
         verticalAlignment = Alignment.Top,
     ) {
         when (h.kind) {
-            HitKind.Video -> AsyncImage(
-                "https://i.ytimg.com/vi/${h.videoId}/mqdefault.jpg", null, contentScale = ContentScale.Crop,
-                modifier = Modifier.size(width = 64.dp, height = 38.dp).clip(RoundedCornerShape(10.dp)).background(scheme.surfaceContainerHigh),
-            )
+            HitKind.Video -> LessonArt(h.videoId, Modifier.size(width = 64.dp, height = 38.dp).clip(RoundedCornerShape(10.dp)))
+            HitKind.Text -> Box(Modifier.size(width = 64.dp, height = 38.dp).clip(RoundedCornerShape(10.dp)).background(scheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
+                val ext = LocalApp.current.library.get(h.videoId)?.meta?.ext.orEmpty()
+                Icon(if (ext.isBlank()) Icons.Rounded.Subtitles else fileIcon(ext), null, tint = scheme.primary, modifier = Modifier.size(20.dp))
+            }
             HitKind.Highlight -> {
                 val c = HighlightColors.getOrNull(h.color)?.ui?.let { Color(it) } ?: scheme.primary
                 // The colour you marked it in, the same bar as on the highlights page.
@@ -251,7 +266,7 @@ private fun HitRow(h: Hit, onClick: () -> Unit) {
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            if (h.kind == HitKind.Highlight) {
+            if (h.kind == HitKind.Highlight || h.kind == HitKind.Text) {
                 // The words come first, because they are what you were looking for.
                 h.snippet?.let { s ->
                     Text(

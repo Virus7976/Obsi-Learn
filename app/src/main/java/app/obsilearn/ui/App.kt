@@ -54,6 +54,7 @@ class Nav(
     val openLearnSettings: () -> Unit = {},
     val openReview: () -> Unit = {},
     val openHighlights: () -> Unit = {},
+    val openStats: () -> Unit = {},
 )
 
 val LocalNav = staticCompositionLocalOf<Nav> { error("Nav not provided") }
@@ -68,6 +69,7 @@ sealed interface Screen {
     data object Settings : Screen
     data object Review : Screen
     data object Highlights : Screen
+    data object Stats : Screen
     data class Template(val id: String) : Screen
     data class Doc(val req: DocRequest) : Screen
     data class Setup(val sourceId: String) : Screen
@@ -94,6 +96,8 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
             fun pushReader(id: String) {
                 val top = stack.last()
                 if (top is Screen.Reader) { if (top.id != id) stack[stack.lastIndex] = Screen.Reader(id) }
+                // Going on from a reading lesson to a video: the video takes its place, so back goes to the course.
+                else if (top is Screen.Doc && top.req.lessonId != id && app.courses.find(top.req.lessonId)?.third?.media?.isBlank() == true) stack[stack.lastIndex] = Screen.Reader(id)
                 else stack.add(Screen.Reader(id))
             }
             fun pushCourse(id: String) {
@@ -101,7 +105,14 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
                 if (!(top is Screen.Course && top.id == id)) stack.add(Screen.Course(id))
             }
             LaunchedEffect(Unit) {
-                DocNav.requests.collect { r -> if (r != null) { stack.add(Screen.Doc(r)); DocNav.requests.value = null } }
+                DocNav.requests.collect { r ->
+                    if (r == null) return@collect
+                    val top = stack.last()
+                    // Another lesson's file takes the place of this one. A file of the same lesson (or from a zip) opens on top.
+                    if (top is Screen.Doc && top.req.lessonId != r.lessonId) stack[stack.lastIndex] = Screen.Doc(r)
+                    else if (!(top is Screen.Doc && top.req == r)) stack.add(Screen.Doc(r))
+                    DocNav.requests.value = null
+                }
             }
             LaunchedEffect(Unit) {
                 SetupNav.requests.collect { id -> if (id != null) { stack.add(Screen.Setup(id)); SetupNav.requests.value = null } }
@@ -110,7 +121,9 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
                 Nav(
                     openVideo = { id ->
                         val l = app.courses.find(id)?.third
+                        val fileMeta = app.library.get(id)?.meta?.takeIf { it.isFile }
                         when {
+                            fileMeta != null -> openFile(ctx, app, fileMeta.parent, fileMeta.file, fileMeta.title, fileMeta.ext)
                             l == null -> toast("That lesson is not in your courses any more.")
                             l.media.isBlank() -> if (l.page.isNotBlank()) openFile(ctx, app, id, l.page, l.title, "html")
                                 else openFile(ctx, app, id, l.resources.firstOrNull()?.uri.orEmpty(), l.title, l.resources.firstOrNull()?.ext.orEmpty())
@@ -125,6 +138,7 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
                     openLearnSettings = { if (stack.last() != Screen.LearnSettings) stack.add(Screen.LearnSettings) },
                     openReview = { if (stack.last() != Screen.Review) stack.add(Screen.Review) },
                     openHighlights = { if (stack.last() != Screen.Highlights) stack.add(Screen.Highlights) },
+                    openStats = { if (stack.last() != Screen.Stats) stack.add(Screen.Stats) },
                 )
             }
 
@@ -268,6 +282,7 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
                         })
                         Screen.Review -> ReviewScreen(onBack = { pop() })
                         Screen.Highlights -> HighlightsScreen(onBack = { pop() })
+                        Screen.Stats -> StatsScreen(onBack = { pop() })
                     }
                     }
                     }
@@ -288,6 +303,7 @@ private fun depth(s: Screen) = when (s) {
     Screen.Settings -> 1
     Screen.Review -> 1
     Screen.Highlights -> 1
+    Screen.Stats -> 1
     is Screen.Template -> 2
     is Screen.Doc -> 2
     is Screen.Setup -> 2

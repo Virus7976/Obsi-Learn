@@ -33,6 +33,12 @@ import kotlin.coroutines.resumeWithException
 class Offline(private val context: Context, private val store: CourseStore) {
     private val dir get() = File(context.filesDir, "offline").also { it.mkdirs() }
 
+    /** A lesson's PDFs, pages and documents, saved with it. The file viewer looks here first. */
+    val filesDir: File get() = File(context.filesDir, "offline-files").also { it.mkdirs() }
+
+    /** Gets a lesson's file as a local copy. Set by the app: the same copy the file viewer uses. */
+    var fetchFile: ((sourceId: String, uri: String) -> File)? = null
+
     private val _saved = MutableStateFlow(scan())
     /** Lesson id to "video" or "audio". */
     val saved: StateFlow<Map<String, String>> = _saved.asStateFlow()
@@ -51,21 +57,44 @@ class Offline(private val context: Context, private val store: CourseStore) {
     /** One save at a time, so a whole course does not fight itself for the network. */
     private val lock = kotlinx.coroutines.sync.Mutex()
 
-    private fun scan(): Map<String, String> = dir.listFiles().orEmpty()
-        .filter { it.length() > 0 && (it.name.endsWith(".video") || it.name.endsWith(".audio")) }
-        .associate { it.nameWithoutExtension to it.extension }
+    private fun scan(): Map<String, String> {
+        val all = dir.listFiles().orEmpty().filter { it.length() > 0 }
+        // A reading lesson keeps only its files: a list of them, named <id>.files.
+        val files = all.filter { it.name.endsWith(".files") }.associate { it.nameWithoutExtension to "files" }
+        return files + all.filter { it.name.endsWith(".video") || it.name.endsWith(".audio") }.associate { it.nameWithoutExtension to it.extension }
+    }
+
+    private fun list(id: String) = File(dir, "$id.files")
+
+    /** Saves the lesson's page and files next to its video. A file that fails is skipped; the video still counts. */
+    private fun keepFiles(id: String): Int {
+        val (course, _, lesson) = store.find(id) ?: return 0
+        val fetch = fetchFile ?: return 0
+        val names = ArrayList<String>()
+        (listOf(lesson.page).filter { it.isNotBlank() } + lesson.resources.map { it.uri }).forEach { uri ->
+            runCatching {
+                val src = fetch(course.sourceId, uri)
+                val to = File(filesDir, src.name)
+                if (to.length() == 0L) src.copyTo(to, overwrite = true)
+                names += to.name
+            }
+        }
+        if (names.isNotEmpty()) list(id).writeText(names.joinToString("\n"))
+        return names.size
+    }
 
     private fun file(id: String, mode: String) = File(dir, "$id.$mode")
 
     fun has(id: String) = id in _saved.value
     fun mode(id: String): String? = _saved.value[id]
 
-    fun sizeMb(id: String): Double = (mode(id)?.let { file(id, it).length() } ?: 0L) / 1_048_576.0
-    fun totalMb(): Double = dir.listFiles().orEmpty().sumOf { it.length() } / 1_048_576.0
+    fun sizeMb(id: String): Double = ((mode(id)?.let { file(id, it).length() } ?: 0L) +
+        (list(id).takeIf { it.exists() }?.readLines()?.sumOf { File(filesDir, it).length() } ?: 0L)) / 1_048_576.0
+    fun totalMb(): Double = (dir.listFiles().orEmpty().sumOf { it.length() } + filesDir.listFiles().orEmpty().sumOf { it.length() }) / 1_048_576.0
 
     /** The saved copy, for the player. A video copy also has the picture. */
     fun localStreams(id: String): Streams? {
-        val m = mode(id) ?: return null
+        val m = mode(id)?.takeIf { it != "files" } ?: return null
         val f = file(id, m).takeIf { it.exists() } ?: return null
         val u = Uri.fromFile(f).toString()
         return Streams(u, if (m == "video") u else null, "saved")
@@ -74,6 +103,7 @@ class Offline(private val context: Context, private val store: CourseStore) {
     fun remove(id: String) {
         jobs.remove(id)?.cancel()
         file(id, "video").delete(); file(id, "audio").delete()
+        list(id).takeIf { it.exists() }?.let { l -> l.readLines().forEach { File(filesDir, it).delete() }; l.delete() }
         _saved.update { it - id }
     }
 
@@ -81,7 +111,12 @@ class Offline(private val context: Context, private val store: CourseStore) {
 
     /** Saves lessons in the background, one after another. [audioOnly] keeps only the sound. */
     fun saveAll(ids: List<String>, audioOnly: Boolean) {
-        val todo = ids.filter { id -> store.find(id)?.third?.media?.isNotBlank() == true && mode(id) != (if (audioOnly) "audio" else "video") && id !in _progress.value }
+        // A lesson with a video saves the video and its files. A reading lesson saves only its files.
+        val todo = ids.filter { id ->
+            val l = store.find(id)?.third ?: return@filter false
+            val want = if (l.media.isBlank()) "files" else if (audioOnly) "audio" else "video"
+            (l.media.isNotBlank() || l.page.isNotBlank() || l.resources.isNotEmpty()) && mode(id) != want && id !in _progress.value
+        }
         if (todo.isEmpty()) { toast("Already on this phone."); return }
         toast(if (todo.size == 1) "Saving for offline…" else "Saving ${todo.size} lessons for offline…")
         todo.forEach { id -> _progress.update { it + (id to -1f) } }
@@ -90,8 +125,13 @@ class Offline(private val context: Context, private val store: CourseStore) {
                 lock.lock()
                 try {
                     _failed.update { it - id }
-                    runCatching { save(id, audioOnly) }
-                        .onSuccess { _saved.update { m -> m + (id to if (audioOnly) "audio" else "video") } }
+                    val media = store.find(id)?.third?.media.orEmpty()
+                    runCatching {
+                        if (media.isNotBlank()) save(id, audioOnly)
+                        val kept = keepFiles(id)
+                        if (media.isBlank() && kept == 0) error("Its files could not be saved.")
+                    }
+                        .onSuccess { _saved.update { m -> m + (id to if (media.isBlank()) "files" else if (audioOnly) "audio" else "video") } }
                         .onFailure { e -> if (e !is kotlinx.coroutines.CancellationException) _failed.update { m -> m + (id to (e.message ?: "Could not save it.")) } }
                 } finally {
                     _progress.update { it - id }

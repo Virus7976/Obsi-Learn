@@ -8,7 +8,7 @@ import app.obsi.core.update.*
 import app.obsi.core.link.*
 import app.obsi.core.share.*
 
-enum class HitKind { Video, Highlight, Playlist }
+enum class HitKind { Video, Highlight, Text, Playlist }
 
 /**
  * One row in the library search. A highlight hit carries the video it is in and the second it starts at,
@@ -43,6 +43,8 @@ object LibrarySearch {
         videos: List<SavedVideo>,
         playlists: List<Playlist>,
         limit: Int = 90,
+        /** Where a highlight is, for people: a time in a lesson, or how far into a file. */
+        place: (SavedVideo, Double) -> String = { _, s -> Transcripts.formatTime(s) },
     ): List<Hit> {
         var q = raw.trim()
         if (q.isEmpty()) return emptyList()
@@ -85,7 +87,7 @@ object LibrarySearch {
             for (v in videos) for (h in v.highlights) {
                 if (h.tags.isEmpty() || !tokens.all { t -> h.tags.any { g -> g.contains(t, true) } }) continue
                 out += Hit(
-                    HitKind.Highlight, v.meta.title, Transcripts.formatTime(h.startSec) + " · " + h.tags.joinToString(" ") { "#$it" },
+                    HitKind.Highlight, v.meta.title, place(v, h.startSec) + " · " + h.tags.joinToString(" ") { "#$it" },
                     snippet = h.text.ifBlank { h.note }.take(140), score = 80.0, videoId = v.meta.id, sec = h.startSec, color = h.color,
                 )
             }
@@ -109,7 +111,7 @@ object LibrarySearch {
             val snip = tokens.firstOrNull { from.contains(it, true) }?.let { snippetAround(from, it) }
             marks += Hit(
                 HitKind.Highlight, v.meta.title,
-                Transcripts.formatTime(h.startSec) + if (note.isNotBlank() && from === text) " · " + note.take(80) else "",
+                place(v, h.startSec) + if (note.isNotBlank() && from === text) " · " + note.take(80) else "",
                 snippet = snip?.first ?: from.take(140), snippetMatch = snip?.second, score = s,
                 videoId = v.meta.id, sec = h.startSec, color = h.color,
             )

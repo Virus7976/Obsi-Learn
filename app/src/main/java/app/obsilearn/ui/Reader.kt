@@ -342,6 +342,8 @@ fun ReaderScreen(videoId: String, onBack: () -> Unit) {
     var away by remember { mutableStateOf(false) }
     var editingId by remember(videoId) { mutableStateOf<String?>(null) }
     var noteFocused by remember(videoId) { mutableStateOf(false) }
+    // Near the end of the transcript: the next lesson shows.
+    var atEnd by remember(videoId) { mutableStateOf(false) }
     LaunchedEffect(settings.autoScroll) { if (!settings.autoScroll) away = false }
     // The spoken word changes several times a second. It goes straight to the text view, so this
     // whole screen does not redraw for it.
@@ -405,7 +407,7 @@ fun ReaderScreen(videoId: String, onBack: () -> Unit) {
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(if (immersive) 28.dp else if (watchFull) 0.dp else WindowInsets.statusBars.asPaddingValues().calculateTopPadding()))
             val noPicture by remember { derivedStateOf { ps.value.noPicture } }
-            LaunchedEffect(noPicture) { if (noPicture) snackbar.showSnackbar("This video has sound only.") }
+            LaunchedEffect(noPicture) { if (noPicture) snackbar.showSnackbar("This lesson has sound only.") }
             if (!immersive) ReaderHeader(
                 video = video, ps = ps, host = app.player,
                 collapsed = collapsed, onExpand = { collapsed = false }, onBack = { if (watchFull) watchFull = false else onBack() },
@@ -511,6 +513,12 @@ fun ReaderScreen(videoId: String, onBack: () -> Unit) {
                 )
             }
 
+            // The lesson's page and files, in sight under the video, not only in the menu.
+            if (!immersive && !collapsed) {
+                val lessonHere = remember(videoId) { app.courses.find(videoId)?.third }
+                LessonFilesRow(videoId, lessonHere, Modifier.padding(vertical = 6.dp))
+            }
+
             playerError?.let { e ->
                 if (!immersive) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(e, color = scheme.error, style = MaterialTheme.typography.bodyMedium)
@@ -537,6 +545,7 @@ fun ReaderScreen(videoId: String, onBack: () -> Unit) {
                         },
                         update = { tv ->
                             tv.onSeek = { sec -> seek(sec) }
+                            tv.onScrollDelta = { atEnd = tv.progress() > 0.97f }
                             // Only your own finger folds the player and hides the bar. Follow-along scrolling leaves them alone.
                             tv.onUserScroll = { dy, atTop ->
                                 if (dy > 6) headerHidden = true else if (dy < -6) headerHidden = false
@@ -583,6 +592,15 @@ fun ReaderScreen(videoId: String, onBack: () -> Unit) {
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
                 }
+                // At the end of the transcript, or when the lesson has ended: the next lesson, video or reading.
+                val ended by remember { derivedStateOf { ps.value.ended } }
+                val nextReading by app.nextReading.collectAsState()
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = (atEnd || ended || nextReading != null) && editingId == null && !searching,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+                    enter = androidx.compose.animation.slideInVertically { it } + fadeIn(),
+                    exit = androidx.compose.animation.slideOutVertically { it } + fadeOut(),
+                ) { NextLessonCard(videoId, markDone = false, Modifier.fillMaxWidth()) }
             }
             // Note bar for the highlight just made, or the one that was tapped.
             val editing = video.highlights.firstOrNull { it.id == editingId }
@@ -936,7 +954,7 @@ private fun SaveWhenIdle(text: String, saved: String, onSave: (String) -> Unit) 
  * One slim field, then one row of buttons. The colours open only when you ask.
  */
 @Composable
-private fun HighlightNoteBar(
+internal fun HighlightNoteBar(
     h: Highlight,
     onNote: (String) -> Unit,
     tags: List<String>,
@@ -946,7 +964,7 @@ private fun HighlightNoteBar(
     onTyping: (Boolean) -> Unit,
     onColor: (Int) -> Unit,
     onDelete: () -> Unit,
-    onPlay: () -> Unit,
+    onPlay: (() -> Unit)?,
     onClose: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -1046,7 +1064,7 @@ private fun HighlightNoteBar(
                     Icon(Icons.Rounded.Link, "Link a note", tint = scheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = onPlay, Modifier.size(40.dp)) { Icon(Icons.Rounded.PlayArrow, "Play from here", tint = scheme.onSurfaceVariant) }
+                if (onPlay != null) IconButton(onClick = onPlay, Modifier.size(40.dp)) { Icon(Icons.Rounded.PlayArrow, "Play from here", tint = scheme.onSurfaceVariant) }
                 IconButton(onClick = onDelete, Modifier.size(40.dp)) { Icon(Icons.Rounded.Delete, "Remove highlight", tint = scheme.onSurfaceVariant) }
             }
         }
@@ -1078,7 +1096,7 @@ private fun FindBar(query: String, count: Int, at: Int, onQuery: (String) -> Uni
             onValueChange = onQuery,
             modifier = Modifier.weight(1f).focusRequester(focus),
             singleLine = true,
-            placeholder = { Text("Find in this video") },
+            placeholder = { Text("Find in this lesson") },
             shape = RoundedCornerShape(50),
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
             keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onStep(1) }),

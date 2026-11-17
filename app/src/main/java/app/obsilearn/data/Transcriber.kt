@@ -37,6 +37,10 @@ import java.util.concurrent.TimeUnit
 /** ObsiLearn's own settings, apart from the ones all Obsi apps share. */
 @Serializable
 data class LearnSettings(
+    /** When a lesson ends, the next one in the course starts. A reading lesson waits for you. */
+    val autoNext: Boolean = true,
+    /** The line over PDF pages that says highlighting is in the text view was closed. */
+    val pagesHintSeen: Boolean = false,
     /** PDFs shown dark: the page turned to black, the text to light, colours kept close. */
     val darkPdf: Boolean = true,
     /** "phone" (offline, free) or "cloud" (your own key, fast and exact). */
