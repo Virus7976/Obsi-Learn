@@ -1,6 +1,7 @@
 package app.obsilearn.ui
 
 import androidx.compose.runtime.LaunchedEffect
+import app.obsi.core.ui.Onboarding as ObsiOnboarding
 
 import app.obsi.core.data.Transcripts
 
@@ -70,6 +71,7 @@ sealed interface Screen {
     data class Template(val id: String) : Screen
     data class Doc(val req: DocRequest) : Screen
     data class Setup(val sourceId: String) : Screen
+    data object Welcome : Screen
 }
 
 @Composable
@@ -77,10 +79,11 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
     val settings by app.settings.state.collectAsState()
     MarginaliaTheme(settings) {
         CompositionLocalProvider(LocalApp provides app) {
-            val stack = remember { mutableStateListOf<Screen>(Screen.Home) }
+            // First run: the walk-through sits on top of home until it is done.
+            val stack = remember { mutableStateListOf<Screen>(Screen.Home).also { if (ObsiOnboarding.needed(app.settings.value)) it.add(Screen.Welcome) } }
             // Home stays underneath. A second Back in the same frame must not take it away too.
             fun pop() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
-            BackHandler(enabled = stack.size > 1) { pop() }
+            BackHandler(enabled = stack.size > 1 && stack.last() != Screen.Welcome) { pop() }
             // Each screen keeps its place while another one is on top: open tab, scroll, search box.
             val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
             val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -259,6 +262,10 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
                         is Screen.Template -> TemplateEditorScreen(screen.id, onBack = { pop() })
                         is Screen.Doc -> DocScreen(screen.req, onBack = { if (stack.last() == screen) pop() })
                         is Screen.Setup -> SetupScreen(screen.sourceId, onDone = { if (stack.last() == screen) pop() })
+                        Screen.Welcome -> LearnOnboarding(onDone = {
+                            stack.remove(Screen.Welcome)
+                            if (app.courses.state.value.sources.isEmpty()) stack.add(Screen.Sources)
+                        })
                         Screen.Review -> ReviewScreen(onBack = { pop() })
                         Screen.Highlights -> HighlightsScreen(onBack = { pop() })
                     }
@@ -284,6 +291,7 @@ private fun depth(s: Screen) = when (s) {
     is Screen.Template -> 2
     is Screen.Doc -> 2
     is Screen.Setup -> 2
+    Screen.Welcome -> 3
 }
 
 /** Opens a page or document of a lesson. ObsiLearn shows it itself when it can; other types go to another app. */

@@ -51,7 +51,7 @@ private fun Card(title: String, content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun SwitchLine(title: String, about: String?, on: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchLine(title: String, about: String?, on: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
