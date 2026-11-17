@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -233,7 +234,7 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
                 note, Modifier.fillMaxWidth().background(scheme.surfaceContainer).padding(horizontal = 16.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
             )
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { c -> TranscriptView(c).also { tview = it } },

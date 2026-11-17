@@ -35,11 +35,12 @@ object DocText {
     private val legacy = setOf("doc", "ppt", "xls", "pps", "dot", "wps", "pub")
 
     /**
+     * [pics] is a folder to keep a PDF's pictures in. Without it, a PDF shows its text only.
      * [picture] turns a picture address from a lesson page into one the reader can load (a file on the
      * phone), or null when it cannot be found.
      */
-    fun build(file: File, ext: String, picture: (String) -> String? = { null }): Out? = when {
-        ext == "pdf" -> pdf(file)?.let { Out(it) }
+    fun build(file: File, ext: String, pics: File? = null, picture: (String) -> String? = { null }): Out? = when {
+        ext == "pdf" -> pdf(file, pics)?.let { Out(it) }
         ext in pages -> Out(page(file.readText(), picture))
         ext == "txt" || ext == "text" -> Out(paragraphs(file.readText()))
         ext == "rtf" -> Out(paragraphs(rtf(file.readText())), "Text only. Formatting from the RTF file is left out.")
@@ -60,17 +61,41 @@ object DocText {
      * The PDF's text, one section per page. Null when the phone cannot read PDF text, or when the PDF has
      * almost no text (a scan): then the pages are the only way to show it.
      */
-    fun pdf(file: File): String? {
+    fun pdf(file: File, pics: File? = null): String? {
         if (Build.VERSION.SDK_INT < 35) return null
-        val pages = pdfPages(file) ?: return null
-        val chars = pages.sumOf { it.length }
+        val pages = pdfLines(file) ?: return null
+        val chars = pages.sumOf { p -> p.sumOf { it.length } }
         if (pages.isEmpty() || chars < 60 * pages.size) return null
+        val found = pics?.let { runCatching { PdfPictures.find(file, it) }.getOrNull() }.orEmpty()
         return buildString {
-            pages.forEachIndexed { i, t ->
+            pages.forEachIndexed { i, lines ->
                 if (pages.size > 1) append("<h6>Page ${i + 1}</h6>")
-                append(paragraphs(t, joinLines = true))
+                // Each picture goes in before the line under it, so it sits where it is on the page.
+                val left = found.filter { it.page == i }.sortedBy { it.line }.toMutableList()
+                val part = StringBuilder()
+                lines.forEachIndexed { n, text ->
+                    while (left.isNotEmpty() && left.first().line <= n) {
+                        append(paragraphs(part.toString(), joinLines = true)); part.setLength(0)
+                        append(img(left.removeAt(0)))
+                    }
+                    part.append(text).append('\n')
+                }
+                append(paragraphs(part.toString(), joinLines = true))
+                left.forEach { append(img(it)) }
             }
         }
+    }
+
+    private fun img(p: PdfPictures.Picture) = "<img src=\"" + android.net.Uri.fromFile(p.file) + "\">"
+
+    /** Each page's lines of text. */
+    private fun pdfLines(file: File): List<List<String>>? {
+        if (Build.VERSION.SDK_INT < 35) return null
+        return runCatching {
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                PdfRenderer(fd).use { r -> (0 until r.pageCount).map { i -> r.openPage(i).use { p -> PdfPictures.lines(p) } } }
+            }
+        }.getOrNull()
     }
 
     /** The text of each page, or null when it cannot be read. */

@@ -62,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -130,7 +131,7 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
         value = withContext(Dispatchers.Default) {
             if (!DocText.maybe(ext)) return@withContext Read(null, "", 0)
             val out = runCatching {
-                DocText.build(f, ext) { src ->
+                DocText.build(f, ext, File(ctx.cacheDir, "pdf-pictures")) { src ->
                     runCatching { android.net.Uri.fromFile(app.localFile(sourceId, DocText.resolve(req.uri, src))).toString() }.getOrNull()
                 }
             }.getOrNull()
@@ -180,7 +181,7 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
             IconButton(onClick = { file?.getOrNull()?.let { openOutside(ctx, app, it) } }) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open in another app") }
         }
 
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             val f = file
             when {
                 f == null || (f.isSuccess && read == null) -> Loading(if (f == null) "Getting the file…" else "Reading the file…")
