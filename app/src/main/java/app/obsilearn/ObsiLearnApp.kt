@@ -128,7 +128,9 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         player = PlayerHost(this, app.obsilearn.data.LessonStreams(courses) { offline }) { settings.value }
         player.artworkFor = { id -> library.get(id)?.meta?.image?.let { img -> if (img.startsWith("hub")) courses.find(id)?.let { courses.playable(it.first.sourceId, img).first } else img } }
         // Every lesson has a place in the library, so search, highlights and review work for all of them.
-        appScope.launch { courses.state.collect { d -> val metas = lessonMetas(); library.sync(metas); dropLeftLessons(metas, d.sources.isEmpty()) } }
+        appScope.launch { courses.state.collect { library.sync(lessonMetas()) } }
+        // Only a show or course you removed takes its lessons out. A refresh never does.
+        courses.onRemoved = { ids -> appScope.launch { dropRemoved(ids) } }
 
         // A lesson saved while it plays goes on from the saved copy.
         appScope.launch {
@@ -207,13 +209,10 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
      * A lesson whose show or course you removed leaves the library, so search and lists stop finding it.
      * A lesson with something you made (highlights, tags, a pin, a playlist) stays.
      */
-    private suspend fun dropLeftLessons(metas: List<app.obsilearn.data.VideoMeta>, noSources: Boolean) {
-        // No lessons while sources exist means the courses did not load. Then remove nothing.
-        if (metas.isEmpty() && !noSources) return
-        val live = metas.mapTo(HashSet()) { it.id }
+    private suspend fun dropRemoved(removed: Set<String>) {
         val inPlaylist = playlists.all.value.flatMapTo(HashSet()) { it.videoIds }
         val gone = library.videos.value.filter { v ->
-            v.meta.link.startsWith("obsilearn://lesson/") && v.meta.id !in live &&
+            v.meta.id in removed && courses.find(v.meta.id) == null &&
                 v.highlights.isEmpty() && v.tags.isEmpty() && !v.pinned && v.playlistId.isEmpty() && v.meta.id !in inPlaylist
         }
         if (gone.isEmpty()) return
@@ -511,7 +510,8 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         while (true) {
             val id = queue.pop() ?: return
             val v = library.get(id) ?: continue
-            player.load(id, v.meta.title, v.meta.author, 0.0, force = true)
+            // Starts where you stopped, like opening it yourself.
+            player.load(id, v.meta.title, v.meta.author, v.resumeSec.takeIf { !v.done } ?: 0.0, force = true)
             advanced.tryEmit(id)
             return
         }

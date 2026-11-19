@@ -113,6 +113,29 @@ class PlaybackService : MediaSessionService() {
                         .build()
                 }
 
+                // Android closed the app, and the media card or a headset asks to go on: play the last
+                // episode from its saved place. Without this the card does nothing.
+                override fun onPlaybackResumption(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+                    val f = com.google.common.util.concurrent.SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+                    val last = app.library.videos.value.filter { it.playedAt > 0 && !it.done }.maxByOrNull { it.playedAt }
+                    if (last == null) { f.setException(UnsupportedOperationException("Nothing to go on with.")); return f }
+                    app.player.load(last.meta.id, last.meta.title, last.meta.author, last.resumeSec, force = true)
+                    scope.launch {
+                        val exo = app.player.exo
+                        for (i in 0 until 150) {
+                            val st = app.player.state.value
+                            if (st.error != null || (!st.loading && exo.mediaItemCount > 0)) break
+                            kotlinx.coroutines.delay(100)
+                        }
+                        if (exo.mediaItemCount == 0) f.setException(IllegalStateException("The episode could not be loaded."))
+                        else f.set(MediaSession.MediaItemsWithStartPosition(listOf(exo.getMediaItemAt(0)), 0, exo.currentPosition))
+                    }
+                    return f
+                }
+
                 override fun onCustomCommand(
                     session: MediaSession,
                     controller: MediaSession.ControllerInfo,

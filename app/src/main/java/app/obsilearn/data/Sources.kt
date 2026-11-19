@@ -162,9 +162,14 @@ class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File
         persist(_state.value)
     }
 
+    /** Called with the lesson ids of a source you removed, so the app can take them out of the library. */
+    var onRemoved: ((Set<String>) -> Unit)? = null
+
     fun removeSource(id: String) {
+        val gone = _state.value.courses.filter { it.sourceId == id }.flatMapTo(HashSet()) { c -> c.lessons.map { it.id } }
         _state.update { d -> d.copy(sources = d.sources.filterNot { it.id == id }, courses = d.courses.filterNot { it.sourceId == id }) }
         persist(_state.value)
+        if (gone.isNotEmpty()) onRemoved?.invoke(gone)
     }
 
     fun editCourse(id: String, block: (Course) -> Course) {
@@ -185,7 +190,7 @@ class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File
             val found = when (s.kind) {
                 "hub" -> Hub.courses(this@CourseStore, s)
                 "links" -> listOf(linksCourse(s))
-                "feed" -> listOf(Feed.course(http, s))
+                "feed" -> listOf(keepOldEpisodes(Feed.course(http, s)))
                 else -> entries(s).also { lastEntries[sourceId] = it }.let { Layout.courses(s, it) }
             }
             _state.update { d ->
@@ -202,6 +207,21 @@ class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File
         } finally {
             _scanning.update { it - sourceId }
         }
+    }
+
+    /**
+     * Many feeds list only their newest episodes, and a bad connection can return a page with none.
+     * Episodes that are no longer in the feed stay, so their place and done mark stay too.
+     */
+    private fun keepOldEpisodes(fresh: Course): Course {
+        val old = course(fresh.id) ?: return fresh
+        val now = fresh.lessons
+        if (now.isEmpty() && old.lessons.isNotEmpty()) throw SourceException("The feed came back empty. Try again later.")
+        val ids = now.mapTo(HashSet()) { it.id }
+        val left = old.lessons.filter { it.id !in ids }
+        if (left.isEmpty()) return fresh
+        // The feed is oldest first, and the ones that left it are older still.
+        return fresh.copy(modules = fresh.modules.mapIndexed { i, m -> if (i == 0) m.copy(lessons = left + m.lessons) else m })
     }
 
     /** The files of each source from its last scan, so the setup can show a choice at once, without reading again. */

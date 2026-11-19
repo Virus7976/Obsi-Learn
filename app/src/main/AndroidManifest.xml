@@ -152,6 +152,12 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+        <!-- The media card and headset buttons can start the last episode again after Android closed the app. -->
+        <receiver android:name="androidx.media3.session.MediaButtonReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
         <receiver android:name="app.obsi.core.update.InstallReceiver" android:exported="false" />
         <receiver android:name=".ReviewReceiver" android:exported="false">
             <intent-filter>
