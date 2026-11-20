@@ -281,37 +281,51 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
                 ) { footer() }
                 androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
             }
-            val editing = item.highlights.firstOrNull { it.id == editingId }
-            AnimatedVisibility(visible = editing != null) {
-                var last by remember { mutableStateOf(editing) }
-                if (editing != null) last = editing
-                last?.let { h ->
-                    val vault = settings.linkedVault(settings.vault) ?: settings.vaultFolders.keys.firstOrNull()
-                    HighlightNoteBar(
-                        h = h,
-                        onNote = { text -> app.library.edit(itemId) { v -> v.copy(highlights = v.highlights.map { if (it.id == h.id) it.copy(note = text) else it }) } },
-                        tags = h.tags,
-                        onTags = { t -> app.library.edit(itemId) { v -> v.copy(highlights = v.highlights.map { if (it.id == h.id) it.copy(tags = t) else it }) } },
-                        vault = vault,
-                        suggestTags = remember(vault) { app.library.videos.value.flatMap { v -> v.highlights.flatMap { it.tags } }.distinct() },
-                        onTyping = { },
-                        onColor = { c ->
-                            app.library.edit(itemId) { v -> v.copy(highlights = v.highlights.map { if (it.id == h.id) it.copy(color = c) else it }) }
-                            app.settings.update { it.copy(highlightColor = c) }
-                        },
-                        onDelete = {
-                            editingId = null
-                            app.library.edit(itemId) { v -> v.copy(highlights = v.highlights.filterNot { it.id == h.id }) }
-                            scope.launch {
-                                val r = snackbar.showSnackbar("Highlight deleted", actionLabel = "Undo", duration = androidx.compose.material3.SnackbarDuration.Short)
-                                if (r == androidx.compose.material3.SnackbarResult.ActionPerformed) app.library.edit(itemId) { v -> v.copy(highlights = v.highlights + h) }
-                            }
-                        },
-                        onPlay = null,
-                        onClose = { editingId = null },
-                    )
-                }
-            }
+            FileHighlightBar(itemId, editingId, { editingId = null }, snackbar)
+        }
+    }
+}
+
+/**
+ * The note, tags and colour of the highlight being edited in a file, under the text or the pages.
+ * Delete can be undone from [snackbar].
+ */
+@Composable
+fun FileHighlightBar(itemId: String, editingId: String?, onClose: () -> Unit, snackbar: androidx.compose.material3.SnackbarHostState) {
+    val app = LocalApp.current
+    val settings by app.settings.state.collectAsState()
+    val videos by app.library.videos.collectAsState()
+    val item = videos.firstOrNull { it.meta.id == itemId } ?: return
+    val scope = rememberCoroutineScope()
+    val editing = item.highlights.firstOrNull { it.id == editingId }
+    AnimatedVisibility(visible = editing != null) {
+        var last by remember { mutableStateOf(editing) }
+        if (editing != null) last = editing
+        last?.let { h ->
+            val vault = settings.linkedVault(settings.vault) ?: settings.vaultFolders.keys.firstOrNull()
+            HighlightNoteBar(
+                h = h,
+                onNote = { text -> app.library.edit(itemId) { v -> v.copy(highlights = v.highlights.map { if (it.id == h.id) it.copy(note = text) else it }) } },
+                tags = h.tags,
+                onTags = { t -> app.library.edit(itemId) { v -> v.copy(highlights = v.highlights.map { if (it.id == h.id) it.copy(tags = t) else it }) } },
+                vault = vault,
+                suggestTags = remember(vault) { app.library.videos.value.flatMap { v -> v.highlights.flatMap { it.tags } }.distinct() },
+                onTyping = { },
+                onColor = { c ->
+                    app.library.edit(itemId) { v -> v.copy(highlights = v.highlights.map { if (it.id == h.id) it.copy(color = c) else it }) }
+                    app.settings.update { it.copy(highlightColor = c) }
+                },
+                onDelete = {
+                    onClose()
+                    app.library.edit(itemId) { v -> v.copy(highlights = v.highlights.filterNot { it.id == h.id }) }
+                    scope.launch {
+                        val r = snackbar.showSnackbar("Highlight deleted", actionLabel = "Undo", duration = androidx.compose.material3.SnackbarDuration.Short)
+                        if (r == androidx.compose.material3.SnackbarResult.ActionPerformed) app.library.edit(itemId) { v -> v.copy(highlights = v.highlights + h) }
+                    }
+                },
+                onPlay = null,
+                onClose = onClose,
+            )
         }
     }
 }

@@ -43,8 +43,10 @@ data class LearnSettings(
     val pagesHintSeen: Boolean = false,
     /** PDFs shown dark: the page turned to black, the text to light, colours kept close. */
     val darkPdf: Boolean = true,
-    /** "phone" (offline, free) or "cloud" (your own key, fast and exact). */
+    /** "phone" (offline, free) or "cloud" (your own key, fast and exact). Only counts once [engineChosen]. */
     val engine: String = "phone",
+    /** The engine was picked by hand. Until then, your key is used when one is set up, else the phone. */
+    val engineChosen: Boolean = false,
     /** Which speech model the phone uses. A key of [Transcriber.phoneModels]. */
     val phoneModel: String = "en-us",
     /** Any service that speaks the OpenAI transcription API: OpenAI, Groq, or your own server. */
@@ -81,6 +83,10 @@ class Transcriber(
     private val settings: () -> LearnSettings,
 ) {
     private val _progress = MutableStateFlow<Map<String, Float>>(emptyMap())
+    /** True when transcripts go to the service with your key, false when the phone makes them. */
+    fun usesCloud(s: LearnSettings = settings()): Boolean =
+        if (s.engineChosen) s.engine == "cloud" else app.obsi.core.ai.Ai.store(context).value.speech != null
+
     /** Lessons waiting or being transcribed. 0..1, negative while waiting its turn. */
     val progress: StateFlow<Map<String, Float>> = _progress.asStateFlow()
 
@@ -108,7 +114,7 @@ class Transcriber(
     /** Transcribes these lessons, one after another. Lessons that have a transcript are skipped, unless [redo]. */
     fun start(ids: List<String>, redo: Boolean = false) {
         val s = settings()
-        if (s.engine == "cloud" && app.obsi.core.ai.Ai.store(context).value.speech == null) { toast("Set up online transcripts first: Settings, then AI service."); return }
+        if (usesCloud(s) && app.obsi.core.ai.Ai.store(context).value.speech == null) { toast("Set up online transcripts first: Settings, then AI service."); return }
         val todo = ids.filter { id ->
             id !in _progress.value && store.find(id)?.third?.media?.isNotBlank() == true && (redo || !hasTranscript(id))
         }
@@ -150,7 +156,8 @@ class Transcriber(
         val local = offline.localStreams(id)
         val (url, headers) = if (local != null) local.audioUrl to emptyMap() else store.playable(course.sourceId, lesson.media)
         val uri = Uri.parse(url)
-        return if (settings().engine == "cloud") cloud(id, uri, headers) else phone(id, uri, headers)
+        val hint = listOf(course.title, lesson.title).filter { it.isNotBlank() }.joinToString(". ")
+        return if (usesCloud()) cloud(id, uri, headers, hint) else phone(id, uri, headers)
     }
 
     // ---------- on the phone (Vosk) ----------
@@ -227,11 +234,11 @@ class Transcriber(
 
     // ---------- your own key (OpenAI-style API) ----------
 
-    private suspend fun cloud(id: String, uri: Uri, headers: Map<String, String>): TranscriptData {
+    private suspend fun cloud(id: String, uri: Uri, headers: Map<String, String>, hint: String): TranscriptData {
         // The service, key and model come from the AI setup every Obsi app shares.
         val ai = app.obsi.core.ai.Ai.store(context).value
         val p = ai.speech ?: error("Set up online transcripts first: Settings, then AI service.")
-        return app.obsi.core.speech.Cloud(http, ai.url(p), ai.key(p), p.speechModel, settings().language).transcribe(context, uri, headers) { f -> report(id, f * 0.95f) }
+        return app.obsi.core.speech.Cloud(http, ai.url(p), ai.key(p), p.speechModel, settings().language, hint).transcribe(context, uri, headers) { f -> report(id, f * 0.95f) }
     }
 
     companion object {

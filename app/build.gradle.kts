@@ -14,8 +14,8 @@ android {
         applicationId = "app.obsilearn"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.4.2"
+        versionCode = 17
+        versionName = "0.4.3"
         // The speech library ships native code for each phone chip. These three cover phones and the test phone.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }

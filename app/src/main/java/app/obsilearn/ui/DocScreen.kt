@@ -197,9 +197,9 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
                 ext in DocHtml.images -> ZoomImage(f.getOrThrow())
                 showText -> DocTextReader(itemId, r!!.built!!, r.note) { if (reading) NextLessonCard(req.lessonId, markDone = true, Modifier.fillMaxWidth()) }
                 ext == "pdf" -> Column(Modifier.fillMaxSize()) {
-                    // Pages cannot be highlighted. Say once where highlighting is, when this PDF has text.
-                    if (r?.built != null) PagesHint { app.docPlaces.set(itemId) { it.copy(mode = "text") } }
-                    PdfPages(f.getOrThrow(), itemId)
+                    // Say once how to highlight on the pages, when this PDF has text.
+                    if (r?.built != null && android.os.Build.VERSION.SDK_INT >= 35) PagesHint()
+                    PdfPages(f.getOrThrow(), itemId, r?.built)
                 }
                 hasOriginal -> PageView(f.getOrThrow(), ext) { src ->
                     runCatching { android.net.Uri.fromFile(app.localFile(sourceId, DocText.resolve(req.uri, src))).toString() }.getOrNull()
@@ -266,9 +266,9 @@ fun Problem(title: String, body: String, retry: (() -> Unit)?, action: Pair<Stri
     }
 }
 
-/** One line over PDF pages: highlighting is in the text view. It can be closed for good. */
+/** One line over PDF pages: how to highlight on them. It can be closed for good. */
 @Composable
-private fun PagesHint(onText: () -> Unit) {
+private fun PagesHint() {
     val app = LocalApp.current
     val learn by app.learn.state.collectAsState()
     if (learn.pagesHintSeen) return
@@ -277,8 +277,7 @@ private fun PagesHint(onText: () -> Unit) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.BorderColor, null, Modifier.size(18.dp), tint = scheme.onSecondaryContainer)
             Spacer(Modifier.width(10.dp))
-            Text("To highlight, show this PDF as text.", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = scheme.onSecondaryContainer)
-            TextButton(onClick = onText) { Text("Show text") }
+            Text("Hold a word, then drag, to highlight.", Modifier.weight(1f).padding(vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = scheme.onSecondaryContainer)
             IconButton(onClick = { app.learn.update { it.copy(pagesHintSeen = true) } }) { Icon(Icons.Rounded.Close, "Do not show this again", tint = scheme.onSecondaryContainer) }
         }
     }
@@ -290,7 +289,7 @@ private fun PagesHint(onText: () -> Unit) {
  * were on is kept for next time.
  */
 @Composable
-private fun PdfPages(file: File, itemId: String) {
+private fun PdfPages(file: File, itemId: String, built: app.obsi.core.data.ArticleDoc.Built?) {
     val app = LocalApp.current
     val scheme = MaterialTheme.colorScheme
     val dark = app.learn.state.collectAsState().value.darkPdf
@@ -315,6 +314,16 @@ private fun PdfPages(file: File, itemId: String) {
     val cache = remember(renderer) { object : android.util.LruCache<Int, Bitmap>(48 * 1024 * 1024) { override fun sizeOf(key: Int, value: Bitmap) = value.byteCount } }
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
+    val videos by app.library.videos.collectAsState()
+    val highlights = videos.firstOrNull { it.meta.id == itemId }?.highlights.orEmpty()
+    var editingId by remember(itemId) { mutableStateOf<String?>(null) }
+    androidx.activity.compose.BackHandler(enabled = editingId != null) { editingId = null }
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
+    // Where each word is on its page, so the pages can be highlighted. Only Android 15 and up read PDF text.
+    val words by produceState<app.obsilearn.data.PdfWords?>(null, renderer, built) {
+        if (built == null || android.os.Build.VERSION.SDK_INT < 35) return@produceState
+        value = withContext(Dispatchers.IO) { lock.withLock { runCatching { PdfMarks.words(renderer, built) }.getOrNull() } }
+    }
     val start = remember(itemId) { app.docPlaces.of(itemId).page.coerceIn(0, (sizes.size - 1).coerceAtLeast(0)) }
     val state = rememberLazyListState(initialFirstVisibleItemIndex = start)
     LaunchedEffect(itemId) {
@@ -327,7 +336,8 @@ private fun PdfPages(file: File, itemId: String) {
             }
         }
     }
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF0E0E0E))) {
+    Column(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF0E0E0E))) {
         val widthPx = with(LocalDensity.current) { maxWidth.toPx() }.toInt()
         LazyColumn(
             state = state,
@@ -378,6 +388,12 @@ private fun PdfPages(file: File, itemId: String) {
                 }
                 Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).aspectRatio(w.toFloat() / h).clip(RoundedCornerShape(4.dp)).background(if (dark) Color(0xFF1A1A1A) else Color.White)) {
                     bmp?.let { Image(it.asImageBitmap(), "Page ${i + 1}", Modifier.fillMaxSize(), colorFilter = filter) }
+                    val map = words
+                    if (map != null && built != null && android.os.Build.VERSION.SDK_INT >= 35) PageMarks(
+                        renderer, lock, i, w, h, map, built, itemId, highlights, editingId,
+                        onEdit = { editingId = it },
+                        onDoubleTap = { if (scale > 1.05f) { scale = 1f; offsetX = 0f } else scale = 2f },
+                    )
                 }
             }
         }
@@ -388,6 +404,9 @@ private fun PdfPages(file: File, itemId: String) {
                 .background(scheme.surfaceContainerHigh.copy(alpha = 0.9f)).padding(horizontal = 12.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelMedium,
         )
+        androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+    }
+    FileHighlightBar(itemId, editingId, { editingId = null }, snackbar)
     }
 }
 

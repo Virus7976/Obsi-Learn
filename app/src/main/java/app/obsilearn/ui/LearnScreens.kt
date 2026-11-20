@@ -130,13 +130,15 @@ fun LearnSettingsScreen(onBack: () -> Unit) {
                 TextButton(onClick = nav.openVaultNotes) { Text("Open vault notes") }
             }
             Card("Transcripts") {
+                val aiNow by androidx.compose.runtime.remember { Ai.store(app) }.state.collectAsState()
+                val cloud = if (l.engineChosen) l.engine == "cloud" else aiNow.speech != null
                 Text("For lessons with no subtitle file.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(l.engine == "phone", { set { it.copy(engine = "phone") } }, label = { Text("On this phone") })
-                    FilterChip(l.engine == "cloud", { set { it.copy(engine = "cloud") } }, label = { Text("With your key") })
+                    FilterChip(!cloud, { set { it.copy(engine = "phone", engineChosen = true) } }, label = { Text("On this phone") })
+                    FilterChip(cloud, { set { it.copy(engine = "cloud", engineChosen = true) } }, label = { Text("With your key") })
                 }
-                if (l.engine == "phone") {
-                    Text("Free and offline. Slower, and a little less exact. The speech model is about 40 to 50 MB and is fetched once.", style = MaterialTheme.typography.bodySmall)
+                if (!cloud) {
+                    Text("Free and offline. Slower, and much less exact. The speech model is about 40 to 50 MB and is fetched once.", style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                         Transcriber.phoneModels.entries.take(4).forEach { (k, v) -> FilterChip(l.phoneModel == k, { set { it.copy(phoneModel = k) } }, label = { Text(v.first) }) }
                     }
@@ -154,7 +156,7 @@ fun LearnSettingsScreen(onBack: () -> Unit) {
                     val sp = ai.speech
                     Text(
                         if (sp != null) "Uses ${sp.title} (${sp.speechModel}), from Settings › AI service."
-                        else "Set it up in Settings › AI service: add a Groq or OpenAI key, then pick it under Transcripts.",
+                        else "Set it up in Settings › AI service: add an OpenRouter, Groq or OpenAI key, then pick it under Transcripts.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (sp != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
                     )
