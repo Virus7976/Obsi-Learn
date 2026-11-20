@@ -14,8 +14,8 @@ android {
         applicationId = "app.obsilearn"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.3.2"
+        versionCode = 14
+        versionName = "0.4.0"
         // The speech library ships native code for each phone chip. These three cover phones and the test phone.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
@@ -57,6 +57,10 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        // The on-phone AI engine is large. Phones are arm64; the x86_64 copy only serves emulators.
+        jniLibs.excludes += "lib/x86_64/liblitertlm_jni.so"
+        // Compressed in the APK, so the download is smaller. The phone unpacks it once, at install.
+        jniLibs.useLegacyPackaging = true
     }
 }
 
@@ -128,3 +132,11 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
+
+// The release notes in docs/releases go into the app, so Settings > What's new shows them with no network.
+val releaseNotes = tasks.register<Sync>("releaseNotes") {
+    from(rootProject.file("docs/releases")) { include("*.md") }
+    into(layout.buildDirectory.dir("generated/releaseNotes/releases"))
+}
+android.sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/releaseNotes"))
+tasks.named("preBuild") { dependsOn(releaseNotes) }

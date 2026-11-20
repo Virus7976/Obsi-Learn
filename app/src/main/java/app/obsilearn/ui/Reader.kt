@@ -1,4 +1,5 @@
 package app.obsilearn.ui
+import app.obsi.core.ui.TagIdeasRow
 import app.obsi.core.data.Transcripts
 import app.obsi.core.R as CoreR
 
@@ -1049,6 +1050,7 @@ internal fun HighlightNoteBar(
                     items(near, key = { "nt$it" }) { s -> androidx.compose.material3.FilterChip(selected = false, onClick = { addTag(s) }, label = { Text("#$s") }) }
                 }
             }
+            TagIdeasRow(h.text, suggestTags, tags, { addTag(it) }, open = tagMode, note = text, writing = (noteFocus && imeUp) || linking)
             if (colorOpen) ColorDots(h.color, Modifier.fillMaxWidth()) { onColor(it); colorOpen = false }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(

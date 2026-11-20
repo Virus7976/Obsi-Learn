@@ -1,5 +1,6 @@
 package app.obsilearn.ui
 
+import app.obsi.core.ai.Ai
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -148,18 +149,15 @@ fun LearnSettingsScreen(onBack: () -> Unit) {
                     )
                     model?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
                 } else {
-                    Text("Fast and very exact. Works with Groq, OpenAI, or any service with the same API. You pay the service.", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FilterChip(l.cloudUrl.contains("groq"), { set { it.copy(cloudUrl = "https://api.groq.com/openai/v1", cloudModel = "whisper-large-v3-turbo") } }, label = { Text("Groq") })
-                        FilterChip(l.cloudUrl.contains("openai.com"), { set { it.copy(cloudUrl = "https://api.openai.com/v1", cloudModel = "whisper-1") } }, label = { Text("OpenAI") })
-                    }
-                    OutlinedTextField(
-                        l.cloudKey, { v -> set { it.copy(cloudKey = v.trim()) } }, label = { Text("Your key") }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth(),
+                    Text("Fast and very exact. You pay the service.", style = MaterialTheme.typography.bodySmall)
+                    val ai by androidx.compose.runtime.remember { Ai.store(app) }.state.collectAsState()
+                    val sp = ai.speech
+                    Text(
+                        if (sp != null) "Uses ${sp.title} (${sp.speechModel}), from Settings › AI service."
+                        else "Set it up in Settings › AI service: add a Groq or OpenAI key, then pick it under Transcripts.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (sp != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
                     )
-                    OutlinedTextField(l.cloudUrl, { v -> set { it.copy(cloudUrl = v.trim()) } }, label = { Text("Service address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(l.cloudModel, { v -> set { it.copy(cloudModel = v.trim()) } }, label = { Text("Model") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(
                         l.language, { v -> set { it.copy(language = v.trim().lowercase()) } }, label = { Text("Language (blank finds it)") },
                         placeholder = { Text("en") }, singleLine = true, modifier = Modifier.fillMaxWidth(),

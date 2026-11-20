@@ -131,6 +131,7 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         appScope.launch { courses.state.collect { library.sync(lessonMetas()) } }
         // Only a show or course you removed takes its lessons out. A refresh never does.
         courses.onRemoved = { ids -> appScope.launch { dropRemoved(ids) } }
+        moveOldTranscriptKey()
 
         // A lesson saved while it plays goes on from the saved copy.
         appScope.launch {
@@ -209,6 +210,25 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
      * A lesson whose show or course you removed leaves the library, so search and lists stop finding it.
      * A lesson with something you made (highlights, tags, a pin, a playlist) stays.
      */
+    /** The key once typed under Transcripts moves to the AI setup all apps share, once. */
+    private fun moveOldTranscriptKey() {
+        val l = learn.value
+        if (l.cloudKey.isBlank()) return
+        val p = when {
+            l.cloudUrl.contains("groq") -> app.obsi.core.ai.AiProvider.Groq
+            l.cloudUrl.contains("openai.com") -> app.obsi.core.ai.AiProvider.OpenAi
+            else -> app.obsi.core.ai.AiProvider.Custom
+        }
+        app.obsi.core.ai.Ai.store(this).update { c ->
+            c.copy(
+                keys = if (c.keys[p.id].isNullOrBlank()) c.keys + (p.id to l.cloudKey) else c.keys,
+                urls = if (p == app.obsi.core.ai.AiProvider.Custom) c.urls + (p.id to l.cloudUrl) else c.urls,
+                speechProvider = c.speechProvider.ifBlank { p.id },
+            )
+        }
+        learn.update { it.copy(cloudKey = "") }
+    }
+
     private suspend fun dropRemoved(removed: Set<String>) {
         val inPlaylist = playlists.all.value.flatMapTo(HashSet()) { it.videoIds }
         val gone = library.videos.value.filter { v ->

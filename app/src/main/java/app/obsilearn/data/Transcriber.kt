@@ -108,7 +108,7 @@ class Transcriber(
     /** Transcribes these lessons, one after another. Lessons that have a transcript are skipped, unless [redo]. */
     fun start(ids: List<String>, redo: Boolean = false) {
         val s = settings()
-        if (s.engine == "cloud" && s.cloudKey.isBlank()) { toast("Add your key first: Settings, then Transcripts."); return }
+        if (s.engine == "cloud" && app.obsi.core.ai.Ai.store(context).value.speech == null) { toast("Set up online transcripts first: Settings, then AI service."); return }
         val todo = ids.filter { id ->
             id !in _progress.value && store.find(id)?.third?.media?.isNotBlank() == true && (redo || !hasTranscript(id))
         }
@@ -228,8 +228,10 @@ class Transcriber(
     // ---------- your own key (OpenAI-style API) ----------
 
     private suspend fun cloud(id: String, uri: Uri, headers: Map<String, String>): TranscriptData {
-        val s = settings()
-        return app.obsi.core.speech.Cloud(http, s.cloudUrl, s.cloudKey, s.cloudModel, s.language).transcribe(context, uri, headers) { p -> report(id, p * 0.95f) }
+        // The service, key and model come from the AI setup every Obsi app shares.
+        val ai = app.obsi.core.ai.Ai.store(context).value
+        val p = ai.speech ?: error("Set up online transcripts first: Settings, then AI service.")
+        return app.obsi.core.speech.Cloud(http, ai.url(p), ai.key(p), p.speechModel, settings().language).transcribe(context, uri, headers) { f -> report(id, f * 0.95f) }
     }
 
     companion object {

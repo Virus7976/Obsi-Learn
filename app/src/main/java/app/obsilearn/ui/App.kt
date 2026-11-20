@@ -1,5 +1,7 @@
 package app.obsilearn.ui
 
+import app.obsi.core.ui.WhatsNewAfterUpdate
+import app.obsi.core.ui.ObsiOnLeave
 import androidx.compose.runtime.LaunchedEffect
 import app.obsi.core.ui.Onboarding as ObsiOnboarding
 
@@ -81,6 +83,9 @@ fun AppRoot(app: ObsiLearnApp, incomingLink: String?, onLinkConsumed: () -> Unit
     val settings by app.settings.state.collectAsState()
     MarginaliaTheme(settings) {
         CompositionLocalProvider(LocalApp provides app) {
+            // After an update: what changed, one time.
+            WhatsNewAfterUpdate()
+            ObsiOnLeave()
             // First run: the walk-through sits on top of home until it is done.
             val stack = remember { mutableStateListOf<Screen>(Screen.Home).also { if (ObsiOnboarding.needed(app.settings.value)) it.add(Screen.Welcome) } }
             // Home stays underneath. A second Back in the same frame must not take it away too.
