@@ -14,8 +14,8 @@ android {
         applicationId = "app.obsilearn"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.4.3"
+        versionCode = 18
+        versionName = "0.4.4"
         // The speech library ships native code for each phone chip. These three cover phones and the test phone.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
@@ -64,6 +64,15 @@ android {
     }
 }
 
+// The phone speech engine's x86 copies (about 60 MB) only serve the emulator. Release builds leave them out.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { v ->
+        v.packaging.jniLibs.excludes.add("lib/x86_64/libsherpa-onnx-jni.so")
+        v.packaging.jniLibs.excludes.add("lib/x86/libsherpa-onnx-jni.so")
+        v.packaging.jniLibs.excludes.add("lib/x86/libonnxruntime.so")
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -107,8 +116,8 @@ dependencies {
     // Keeps only the sound of a video, for audio-only saves.
     implementation("androidx.media3:media3-transformer:1.8.0")
     // Speech to text on the phone, offline (Apache 2.0). JNA is how it calls its native library.
-    implementation("com.alphacephei:vosk-android:0.3.47")
-    implementation("net.java.dev.jna:jna:5.13.0@aar")
+    // Speech to text on the phone. From github.com/k2-fsa/sherpa-onnx releases (Apache 2.0); not on Maven Central.
+    implementation(files("libs/sherpa-onnx-static-link-onnxruntime-2.0.1.aar"))
     // Windows and NAS shared folders (SMB 2 and 3).
     // It uses the crypto library the installers bring already, not a second copy.
     implementation("eu.agno3.jcifs:jcifs-ng:2.1.10") { exclude(group = "org.bouncycastle") }

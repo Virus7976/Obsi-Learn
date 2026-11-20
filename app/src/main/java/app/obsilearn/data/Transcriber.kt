@@ -47,8 +47,10 @@ data class LearnSettings(
     val engine: String = "phone",
     /** The engine was picked by hand. Until then, your key is used when one is set up, else the phone. */
     val engineChosen: Boolean = false,
-    /** Which speech model the phone uses. A key of [Transcriber.phoneModels]. */
-    val phoneModel: String = "en-us",
+    /** Which speech model the phone uses: a key of [PhoneSpeech.Model]. Anything else: the one that suits the phone. */
+    val phoneModel: String = "",
+    /** After a transcript is made, the text model fixes misheard words, stops and capitals. Only the text is sent. */
+    val cleanUp: Boolean = false,
     /** Any service that speaks the OpenAI transcription API: OpenAI, Groq, or your own server. */
     val cloudUrl: String = "https://api.groq.com/openai/v1",
     val cloudKey: String = "",
@@ -157,105 +159,84 @@ class Transcriber(
         val (url, headers) = if (local != null) local.audioUrl to emptyMap() else store.playable(course.sourceId, lesson.media)
         val uri = Uri.parse(url)
         val hint = listOf(course.title, lesson.title).filter { it.isNotBlank() }.joinToString(". ")
-        return if (usesCloud()) cloud(id, uri, headers, hint) else phone(id, uri, headers)
+        val clean = settings().cleanUp && app.obsi.core.ai.Ai.readyNow
+        // With clean-up on, the engine gets most of the bar and the clean-up the rest.
+        val share = if (clean) 0.85f else 1f
+        val data = if (usesCloud()) cloud(id, uri, headers, hint, share) else phone(id, uri, headers, share)
+        if (!clean) return data
+        val words = app.obsi.core.speech.Speech.words(data.cues)
+        val fixed = app.obsi.core.ai.CleanTranscript.run(context, words, hint) { f -> report(id, share + (1 - share) * f) }
+        return data.copy(cues = app.obsi.core.speech.Speech.cues(fixed))
     }
 
-    // ---------- on the phone (Vosk) ----------
+    // ---------- on the phone (sherpa-onnx) ----------
 
     private fun modelDir(key: String) = File(context.filesDir, "speech/$key")
+    private val vadFile get() = File(context.filesDir, "speech/silero_vad.onnx")
 
-    fun modelReady(key: String = settings().phoneModel) = File(modelDir(key), "conf").exists() || File(modelDir(key), "am").exists()
+    /** The model the phone uses now. */
+    fun phoneModel(): PhoneSpeech.Model = PhoneSpeech.pick(context, settings().phoneModel)
 
-    /** Downloads and unpacks the phone speech model, once. */
-    private suspend fun ensureModel(key: String): File {
-        val dir = modelDir(key)
-        if (modelReady(key)) return dir
-        val url = phoneModels[key]?.second ?: error("That speech model is not known.")
-        toast("Getting the speech model. This happens once.")
+    fun modelReady(m: PhoneSpeech.Model = phoneModel()) = vadFile.exists() && m.files.all { File(modelDir(m.key), it).exists() }
+
+    /** Fetches one file to [to], through a .part file, so a cut-off download is never taken for a whole one. */
+    private fun fetch(url: String, to: File, onBytes: (Long) -> Unit) {
+        if (to.exists()) return
+        to.parentFile?.mkdirs()
+        val part = File(to.path + ".part")
+        http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+            if (!r.isSuccessful) error("Could not get the speech model (${r.code}).")
+            part.outputStream().use { out ->
+                r.body!!.byteStream().use { input ->
+                    val buf = ByteArray(256 * 1024)
+                    while (true) { val n = input.read(buf); if (n < 0) break; out.write(buf, 0, n); onBytes(n.toLong()) }
+                }
+            }
+        }
+        if (!part.renameTo(to)) error("Could not keep the speech model.")
+    }
+
+    /** Downloads the phone speech model, once. Old models from before are removed to free the space. */
+    private suspend fun ensureModel(m: PhoneSpeech.Model): File {
+        val dir = modelDir(m.key)
+        if (modelReady(m)) return dir
+        toast("Getting the speech model (${m.mb} MB). This happens once.")
         modelProgress.value = 0f
         try {
-            val zip = File(context.cacheDir, "speech-$key.zip")
-            http.newCall(Request.Builder().url(url).build()).execute().use { r ->
-                if (!r.isSuccessful) error("Could not get the speech model (${r.code}).")
-                val body = r.body!!
-                val total = body.contentLength()
-                zip.outputStream().use { out ->
-                    body.byteStream().use { input ->
-                        val buf = ByteArray(256 * 1024); var pos = 0L
-                        while (true) { val n = input.read(buf); if (n < 0) break; out.write(buf, 0, n); pos += n; if (total > 0) modelProgress.value = pos.toFloat() / total }
-                    }
-                }
+            File(context.filesDir, "speech").listFiles()?.forEach { f ->
+                if (f.isDirectory && PhoneSpeech.Model.of(f.name) == null) f.deleteRecursively()
             }
-            val tmp = File(dir.parentFile, "$key.part").also { it.deleteRecursively(); it.mkdirs() }
-            java.util.zip.ZipInputStream(zip.inputStream().buffered()).use { z ->
-                while (true) {
-                    val e = z.nextEntry ?: break
-                    // The zip has one top folder. Its contents go straight into the model folder.
-                    val rel = e.name.substringAfter('/', "")
-                    if (rel.isBlank() || rel.contains("..")) continue
-                    val f = File(tmp, rel)
-                    if (e.isDirectory) f.mkdirs() else { f.parentFile?.mkdirs(); f.outputStream().use { z.copyTo(it) } }
-                }
+            val total = m.mb * 1_000_000L
+            var got = 0L
+            val count: (Long) -> Unit = { n -> got += n; modelProgress.value = (got.toFloat() / total).coerceIn(0f, 1f) }
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
+                fetch(PhoneSpeech.VAD_URL, vadFile) {}
+                m.files.forEach { fetch(m.url(it), File(dir, it), count) }
             }
-            zip.delete()
-            dir.deleteRecursively()
-            if (!tmp.renameTo(dir)) error("Could not keep the speech model.")
             return dir
         } finally {
             modelProgress.value = null
         }
     }
 
-    private suspend fun phone(id: String, uri: Uri, headers: Map<String, String>): TranscriptData {
-        val key = settings().phoneModel
-        val dir = ensureModel(key)
-        val model = org.vosk.Model(dir.absolutePath)
-        val rec = org.vosk.Recognizer(model, app.obsi.core.speech.Pcm.RATE.toFloat())
-        val words = ArrayList<app.obsi.core.speech.Word>()
-        try {
-            rec.setWords(true)
-            app.obsi.core.speech.Pcm.decode(context, uri, headers, { p -> report(id, p) }) { block ->
-                if (rec.acceptWaveForm(block, block.size)) words += parseVosk(rec.result)
-            }
-            words += parseVosk(rec.finalResult)
-        } finally {
-            rec.close(); model.close()
-        }
+    private suspend fun phone(id: String, uri: Uri, headers: Map<String, String>, share: Float): TranscriptData {
+        val m = phoneModel()
+        val dir = ensureModel(m)
+        val words = PhoneSpeech.transcribe(context, m, dir, vadFile, uri, headers) { p -> report(id, p * share) }
         if (words.isEmpty()) error("No speech was heard in this lesson.")
-        return TranscriptData(lang = key.substringBefore('-'), auto = true, cues = app.obsi.core.speech.Speech.cues(words))
+        val lang = if (m == PhoneSpeech.Model.Moonshine) "en" else settings().language
+        return TranscriptData(lang = lang, auto = true, cues = app.obsi.core.speech.Speech.cues(words))
     }
-
-    private fun parseVosk(text: String): List<app.obsi.core.speech.Word> = runCatching {
-        json.parseToJsonElement(text).jsonObject["result"]?.jsonArray.orEmpty().map { it.jsonObject }.mapNotNull { w ->
-            val word = w["word"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-            app.obsi.core.speech.Word(word, w["start"]?.jsonPrimitive?.doubleOrNull ?: 0.0, w["end"]?.jsonPrimitive?.doubleOrNull ?: 0.0)
-        }
-    }.getOrDefault(emptyList())
 
     // ---------- your own key (OpenAI-style API) ----------
 
-    private suspend fun cloud(id: String, uri: Uri, headers: Map<String, String>, hint: String): TranscriptData {
+    private suspend fun cloud(id: String, uri: Uri, headers: Map<String, String>, hint: String, share: Float): TranscriptData {
         // The service, key and model come from the AI setup every Obsi app shares.
         val ai = app.obsi.core.ai.Ai.store(context).value
         val p = ai.speech ?: error("Set up online transcripts first: Settings, then AI service.")
-        return app.obsi.core.speech.Cloud(http, ai.url(p), ai.key(p), p.speechModel, settings().language, hint).transcribe(context, uri, headers) { f -> report(id, f * 0.95f) }
+        return app.obsi.core.speech.Cloud(http, ai.url(p), ai.key(p), p.speechModel, settings().language, hint).transcribe(context, uri, headers) { f -> report(id, f * share) }
     }
 
-    companion object {
-        /**
-         * Small speech models that run on a phone, from alphacephei.com/vosk/models (Apache 2.0).
-         * Key to (name, address).
-         */
-        val phoneModels: Map<String, Pair<String, String>> = linkedMapOf(
-            "en-us" to ("English" to "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"),
-            "es" to ("Spanish" to "https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip"),
-            "fr" to ("French" to "https://alphacephei.com/vosk/models/vosk-model-small-fr-0.22.zip"),
-            "de" to ("German" to "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip"),
-            "pt" to ("Portuguese" to "https://alphacephei.com/vosk/models/vosk-model-small-pt-0.3.zip"),
-            "it" to ("Italian" to "https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip"),
-            "nl" to ("Dutch" to "https://alphacephei.com/vosk/models/vosk-model-small-nl-0.22.zip"),
-        )
-    }
 
 
 }

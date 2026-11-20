@@ -5,10 +5,8 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
 
-# Vosk speech recognition calls its native library through JNA, which finds classes by name.
--keep class com.sun.jna.** { *; }
--keep class * implements com.sun.jna.** { *; }
--keep class org.vosk.** { *; }
+# The phone speech engine (sherpa-onnx) reads its config classes from native code, by field name.
+-keep class com.k2fsa.sherpa.onnx.** { *; }
 -dontwarn java.awt.**
 -dontwarn org.mozilla.javascript.**
 -dontwarn java.beans.BeanDescriptor

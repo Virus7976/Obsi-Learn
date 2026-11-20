@@ -1,5 +1,6 @@
 package app.obsilearn.ui
 
+import app.obsilearn.data.PhoneSpeech
 import app.obsi.core.ai.Ai
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -138,15 +139,18 @@ fun LearnSettingsScreen(onBack: () -> Unit) {
                     FilterChip(cloud, { set { it.copy(engine = "cloud", engineChosen = true) } }, label = { Text("With your key") })
                 }
                 if (!cloud) {
-                    Text("Free and offline. Slower, and much less exact. The speech model is about 40 to 50 MB and is fetched once.", style = MaterialTheme.typography.bodySmall)
+                    Text("Free, offline and private. Slower than a service.", style = MaterialTheme.typography.bodySmall)
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    val best = androidx.compose.runtime.remember { PhoneSpeech.suggest(ctx) }
+                    val now = PhoneSpeech.pick(ctx, l.phoneModel)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                        Transcriber.phoneModels.entries.take(4).forEach { (k, v) -> FilterChip(l.phoneModel == k, { set { it.copy(phoneModel = k) } }, label = { Text(v.first) }) }
+                        PhoneSpeech.Model.entries.forEach { m ->
+                            FilterChip(now == m, { set { it.copy(phoneModel = m.key) } }, label = { Text("${m.title}, ${m.mb} MB") })
+                        }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                        Transcriber.phoneModels.entries.drop(4).forEach { (k, v) -> FilterChip(l.phoneModel == k, { set { it.copy(phoneModel = k) } }, label = { Text(v.first) }) }
-                    }
+                    Text(now.about + if (now == best) " Suits this phone." else "", style = MaterialTheme.typography.bodySmall)
                     Text(
-                        if (app.transcriber.modelReady(l.phoneModel)) "This model is on the phone." else "This model is fetched the first time you make a transcript.",
+                        if (app.transcriber.modelReady(now)) "This model is on the phone." else "It is fetched the first time you make a transcript. Use Wi-Fi.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     model?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
@@ -164,6 +168,18 @@ fun LearnSettingsScreen(onBack: () -> Unit) {
                         l.language, { v -> set { it.copy(language = v.trim().lowercase()) } }, label = { Text("Language (blank finds it)") },
                         placeholder = { Text("en") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                // Hidden until a text model works, like every AI part of the app.
+                val textAi by Ai.usable.collectAsState()
+                if (textAi) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Clean up with AI", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Fixes misheard words, stops and capitals. Sends only the text, not the sound.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.Switch(l.cleanUp, { v -> set { it.copy(cleanUp = v) } })
                 }
             }
             Card("Offline") {
