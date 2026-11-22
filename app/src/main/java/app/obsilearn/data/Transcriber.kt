@@ -51,6 +51,8 @@ data class LearnSettings(
     val phoneModel: String = "",
     /** After a transcript is made, the text model fixes misheard words, stops and capitals. Only the text is sent. */
     val cleanUp: Boolean = false,
+    /** The quick buttons at the top of a lesson's menu, in order. Keys of the lesson menu's quick actions. */
+    val quick: List<String> = listOf("find", "follow", "text", "listen"),
     /** Any service that speaks the OpenAI transcription API: OpenAI, Groq, or your own server. */
     val cloudUrl: String = "https://api.groq.com/openai/v1",
     val cloudKey: String = "",
@@ -113,21 +115,55 @@ class Transcriber(
 
     fun hasTranscript(id: String) = library.loadTranscript(id) != null
 
-    /** Transcribes these lessons, one after another. Lessons that have a transcript are skipped, unless [redo]. */
-    fun start(ids: List<String>, redo: Boolean = false) {
+    /** "phone" or "cloud" for one lesson's next transcript, picked in its menu. It wins over the setting once. */
+    private val engineFor = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Is a speech service with a key set up? */
+    fun hasKey(): Boolean = app.obsi.core.ai.Ai.store(context).value.speech != null
+
+    /**
+     * Transcribes these lessons, one after another. Lessons that have a transcript are skipped, unless [redo].
+     * [engine] is "phone" or "cloud" to use that one this time, or null for the setting.
+     */
+    fun start(ids: List<String>, redo: Boolean = false, engine: String? = null) {
         val s = settings()
-        if (usesCloud(s) && app.obsi.core.ai.Ai.store(context).value.speech == null) { toast("Set up online transcripts first: Settings, then AI service."); return }
+        val cloud = engine?.let { it == "cloud" } ?: usesCloud(s)
+        if (cloud && !hasKey()) { toast("Set up online transcripts first: Settings, then AI service."); return }
         val todo = ids.filter { id ->
             id !in _progress.value && store.find(id)?.third?.media?.isNotBlank() == true && (redo || !hasTranscript(id))
         }
         if (todo.isEmpty()) { toast("Those lessons have transcripts already."); return }
+        todo.forEach { id -> engine?.let { engineFor[id] = it } ?: engineFor.remove(id) }
         toast(if (todo.size == 1) "Making a transcript…" else "Making ${todo.size} transcripts…")
+        queue(todo, "Transcripts are ready.", "Some transcripts could not be made: ") { transcribe(it) }
+    }
+
+    /**
+     * Makes a lesson's transcript better with the text model: misheard words, stops and capitals. The sound
+     * is not used again, only the text, so it is quick and costs few tokens.
+     */
+    fun refine(id: String) {
+        val now = library.loadTranscript(id) ?: run { toast("This lesson has no transcript yet."); return }
+        if (!app.obsi.core.ai.Ai.readyNow) { toast("No AI is working right now. See Settings, then AI service."); return }
+        if (id in _progress.value) return
+        toast("Making the transcript better…")
+        queue(listOf(id), "The transcript is better now.", "The transcript could not be made better: ") {
+            val (course, _, lesson) = store.find(id) ?: error("That lesson is gone.")
+            val hint = listOf(course.title, lesson.title).filter { it.isNotBlank() }.joinToString(". ")
+            val words = app.obsi.core.speech.Speech.words(now.cues)
+            val fixed = app.obsi.core.ai.CleanTranscript.run(context, words, hint) { f -> report(id, f) }
+            now.copy(cues = app.obsi.core.speech.Speech.cues(fixed))
+        }
+    }
+
+    /** Runs [work] for each lesson, one at a time, and saves what it makes as the lesson's transcript. */
+    private fun queue(todo: List<String>, ready: String, failedText: String, work: suspend (String) -> TranscriptData) {
         todo.forEach { id -> _progress.update { it + (id to -1f) } }
         for (id in todo) {
             jobs[id] = scope.launch {
                 lock.withLock {
                     _failed.update { it - id }
-                    runCatching { transcribe(id) }
+                    runCatching { work(id) }
                         .onSuccess { data ->
                             library.saveTranscript(id, data)
                             _done.update { it + id }
@@ -135,8 +171,9 @@ class Transcriber(
                         .onFailure { e -> if (e !is kotlinx.coroutines.CancellationException) _failed.update { it + (id to (e.message ?: "It did not work.")) } }
                     _progress.update { it - id }
                     jobs.remove(id)
+                    engineFor.remove(id)
                 }
-                if (_progress.value.isEmpty()) toast(if (_failed.value.isEmpty()) "Transcripts are ready." else "Some transcripts could not be made: " + _failed.value.values.first())
+                if (_progress.value.isEmpty()) toast(if (_failed.value.isEmpty()) ready else failedText + _failed.value.values.first())
             }
         }
     }
@@ -162,7 +199,8 @@ class Transcriber(
         val clean = settings().cleanUp && app.obsi.core.ai.Ai.readyNow
         // With clean-up on, the engine gets most of the bar and the clean-up the rest.
         val share = if (clean) 0.85f else 1f
-        val data = if (usesCloud()) cloud(id, uri, headers, hint, share) else phone(id, uri, headers, share)
+        val cloudNow = engineFor[id]?.let { it == "cloud" } ?: usesCloud()
+        val data = if (cloudNow) cloud(id, uri, headers, hint, share) else phone(id, uri, headers, share)
         if (!clean) return data
         val words = app.obsi.core.speech.Speech.words(data.cues)
         val fixed = app.obsi.core.ai.CleanTranscript.run(context, words, hint) { f -> report(id, share + (1 - share) * f) }

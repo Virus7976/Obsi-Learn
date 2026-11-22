@@ -26,6 +26,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Search
@@ -419,83 +420,25 @@ fun ReaderScreen(videoId: String, onBack: () -> Unit) {
                 full = watchFull, onFull = { collapsed = false; editingId = null; searching = false; watchFull = !watchFull },
                 menuOpen = menu, onMenu = { menu = it },
             ) {
-                // Four switches for how you read, as tiles. Then what is about the video, as a short list.
+                // Quick buttons you pick, then one row per group. See LessonMenu.kt.
                 val watching = ps.value.videoOn
-                Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MenuTile("Find", Icons.Rounded.Search, on = searching) { menu = false; searching = true }
-                    MenuTile("Follow", Icons.Rounded.MyLocation, on = settings.autoScroll) { app.settings.update { it.copy(autoScroll = !it.autoScroll) } }
-                    MenuTile("Text only", Icons.Rounded.Fullscreen, on = false) { menu = false; immersive = true }
-                    MenuTile(
-                        if (watching) "Listen" else "Video", if (watching) Icons.Rounded.Headphones else Icons.Rounded.Videocam,
-                        on = false, enabled = watching || !ps.value.noPicture,
-                    ) { menu = false; app.player.setVideo(!watching) }
-                }
-                androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp), color = scheme.outlineVariant.copy(alpha = 0.4f))
-                DropdownMenuItem(
-                    text = { Text("Mark as done") },
-                    leadingIcon = { Icon(Icons.Rounded.TaskAlt, null) },
-                    trailingIcon = { if (video.done) Icon(Icons.Rounded.Check, "On", tint = scheme.primary) },
-                    onClick = { app.setDone(videoId, !video.done) },
+                val quick = listOf(
+                    QuickAction("find", "Find", Icons.Rounded.Search, on = searching) { menu = false; searching = true },
+                    QuickAction("follow", "Follow", Icons.Rounded.MyLocation, on = settings.autoScroll) { app.settings.update { it.copy(autoScroll = !it.autoScroll) } },
+                    QuickAction("text", "Text only", Icons.Rounded.Fullscreen) { menu = false; immersive = true },
+                    QuickAction(
+                        "listen", if (watching) "Listen" else "Video", if (watching) Icons.Rounded.Headphones else Icons.Rounded.Videocam,
+                        enabled = watching || !ps.value.noPicture,
+                    ) { menu = false; app.player.setVideo(!watching) },
+                    QuickAction("done", "Done", Icons.Rounded.TaskAlt, on = video.done) { app.setDone(videoId, !video.done) },
+                    QuickAction("refine", "Refine", Icons.Rounded.AutoFixHigh, enabled = transcript != null) { menu = false; app.transcriber.refine(videoId) },
+                    QuickAction("note", "Note", Icons.Rounded.Sell) { menu = false; showActions = true },
+                    QuickAction("about", "About", Icons.Rounded.Description) { menu = false; showAbout = true },
                 )
-                DropdownMenuItem(
-                    text = { Text("About this lesson") },
-                    leadingIcon = { Icon(Icons.Rounded.Description, null) },
-                    onClick = { menu = false; showAbout = true },
-                )
-                DropdownMenuItem(
-                    text = { Text(if (transcript == null) "Make a transcript" else "Make the transcript again") },
-                    leadingIcon = { Icon(Icons.Rounded.Subtitles, null) },
-                    onClick = { menu = false; app.transcriber.start(listOf(videoId), redo = transcript != null) },
-                )
-                // Save this lesson on the phone, from here, the same as the course page's lesson menu.
-                val offlineSaved by app.offline.saved.collectAsState()
-                val offlineSaving by app.offline.progress.collectAsState()
-                val lesson = remember(videoId) { app.courses.find(videoId)?.third }
-                val offMode = offlineSaved[videoId]
-                val saving = offlineSaving[videoId]
-                if (lesson != null && lesson.media.isNotBlank()) {
-                    if (saving != null) DropdownMenuItem(
-                        text = { Text(if (saving < 0) "Waiting to save. Tap to stop." else "Saving ${(saving * 100).toInt()}%. Tap to stop.") },
-                        leadingIcon = { Icon(Icons.Rounded.Download, null) },
-                        onClick = { menu = false; app.offline.cancel(videoId) },
-                    ) else {
-                        if (offMode != "video") DropdownMenuItem(
-                            text = { Text("Save for offline") },
-                            leadingIcon = { Icon(Icons.Rounded.Download, null) },
-                            onClick = { menu = false; app.offline.saveAll(listOf(videoId), false) },
-                        )
-                        if (offMode != "audio" && lesson.kind == "video") DropdownMenuItem(
-                            text = { Text("Save audio only") },
-                            leadingIcon = { Icon(Icons.Rounded.Headphones, null) },
-                            onClick = { menu = false; app.offline.saveAll(listOf(videoId), true) },
-                        )
-                        if (offMode != null) DropdownMenuItem(
-                            text = { Text("Remove offline copy") },
-                            leadingIcon = { Icon(Icons.Rounded.DownloadDone, null) },
-                            onClick = { menu = false; app.offline.remove(videoId) },
-                        )
-                    }
-                }
-                // The lesson's own files, shown inside the app.
-                if (lesson != null) {
-                    if (lesson.page.isNotBlank()) DropdownMenuItem(
-                        text = { Text("Lesson page") },
-                        leadingIcon = { Icon(Icons.Rounded.Description, null) },
-                        onClick = { menu = false; openFile(ctx, app, videoId, lesson.page, lesson.title, "html") },
-                    )
-                    lesson.resources.forEach { r ->
-                        DropdownMenuItem(
-                            text = { Text(r.title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
-                            leadingIcon = { Icon(Icons.Rounded.AttachFile, null) },
-                            trailingIcon = { Text(r.ext.uppercase(), style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant) },
-                            onClick = { menu = false; openFile(ctx, app, videoId, r.uri, r.title, r.ext) },
-                        )
-                    }
-                }
-                DropdownMenuItem(
-                    text = { Text("Tags, queue and note") },
-                    leadingIcon = { Icon(Icons.Rounded.Sell, null) },
-                    onClick = { menu = false; showActions = true },
+                LessonMenuItems(
+                    videoId = videoId, done = video.done, hasTranscript = transcript != null, quick = quick,
+                    close = { menu = false }, onAbout = { showAbout = true }, onActions = { showActions = true },
+                    openFile = { uri, title, ext -> openFile(ctx, app, videoId, uri, title, ext) },
                 )
             }
 
@@ -1112,26 +1055,5 @@ private fun FindBar(query: String, count: Int, at: Int, onQuery: (String) -> Uni
         IconButton(onClick = { onStep(-1) }, enabled = count > 0) { Icon(Icons.Rounded.KeyboardArrowUp, "Previous match") }
         IconButton(onClick = { onStep(1) }, enabled = count > 0) { Icon(Icons.Rounded.KeyboardArrowDown, "Next match") }
         IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Close search") }
-    }
-}
-
-/** A square switch in the reader's menu: an icon over a short name, filled while it is on. */
-@Composable
-private fun MenuTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Column(
-        Modifier.size(width = 68.dp, height = 64.dp).clip(RoundedCornerShape(16.dp))
-            .background(if (on) scheme.primaryContainer else scheme.surfaceContainerHighest)
-            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-    ) {
-        val tint = when {
-            !enabled -> scheme.outline
-            on -> scheme.onPrimaryContainer
-            else -> scheme.onSurface
-        }
-        Icon(icon, null, Modifier.size(22.dp), tint = tint)
-        Spacer(Modifier.height(4.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
     }
 }
