@@ -92,6 +92,8 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
     override fun onCreate() {
         super.onCreate()
         app.obsi.core.Brand.init(app.obsi.core.ObsiApp.Learn)
+        // The PDF library finds its own resource files through the app. It loads nothing until used.
+        com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
         app.obsi.core.share.SharedHighlights.source = ::sharedHighlights
         app.obsi.core.share.SharedSetup.source = { app.obsi.core.share.SharedSetup.of(settings.value) }
         app.obsi.core.share.SharedStyle.source = { app.obsi.core.share.ObsiStyle.of(settings.value) }

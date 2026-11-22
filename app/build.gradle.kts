@@ -120,6 +120,8 @@ dependencies {
     implementation(files("libs/sherpa-onnx-static-link-onnxruntime-2.0.1.aar"))
     // Windows and NAS shared folders (SMB 2 and 3).
     // It uses the crypto library the installers bring already, not a second copy.
+    // Reads where each picture sits on a PDF page, so the text view can show the real pictures (Apache 2.0).
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("eu.agno3.jcifs:jcifs-ng:2.1.10") { exclude(group = "org.bouncycastle") }
     // Sign in with Google, for Google Drive.
     implementation("com.google.android.gms:play-services-auth:21.3.0")
