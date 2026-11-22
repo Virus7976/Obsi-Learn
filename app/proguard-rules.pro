@@ -36,3 +36,8 @@
 -keep class jcifs.** { *; }
 -dontwarn org.bouncycastle.**
 -dontwarn jcifs.**
+
+# PdfBox (picture places in PDFs). JPEG 2000 decoding is an optional extra it can use; not shipped.
+-dontwarn com.gemalto.jp2.**
+-keep class com.tom_roush.pdfbox.** { *; }
+-keep class com.tom_roush.fontbox.** { *; }
