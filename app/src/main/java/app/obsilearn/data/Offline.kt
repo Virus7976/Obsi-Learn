@@ -39,6 +39,9 @@ class Offline(private val context: Context, private val store: CourseStore) {
     /** Gets a lesson's file as a local copy. Set by the app: the same copy the file viewer uses. */
     var fetchFile: ((sourceId: String, uri: String) -> File)? = null
 
+    /** Reads and stores a lesson's transcript, if it has one to read. Set by the app. A failure is skipped. */
+    var keepTranscript: ((id: String) -> Unit)? = null
+
     private val _saved = MutableStateFlow(scan())
     /** Lesson id to "video" or "audio". */
     val saved: StateFlow<Map<String, String>> = _saved.asStateFlow()
@@ -111,6 +114,8 @@ class Offline(private val context: Context, private val store: CourseStore) {
 
     /** Saves lessons in the background, one after another. [audioOnly] keeps only the sound. */
     fun saveAll(ids: List<String>, audioOnly: Boolean) {
+        // Lessons saved before transcripts were kept get theirs now.
+        fillTranscripts(ids.filter { has(it) })
         // A lesson with a video saves the video and its files. A reading lesson saves only its files.
         val todo = ids.filter { id ->
             val l = store.find(id)?.third ?: return@filter false
@@ -129,6 +134,7 @@ class Offline(private val context: Context, private val store: CourseStore) {
                     runCatching {
                         if (media.isNotBlank()) save(id, audioOnly)
                         val kept = keepFiles(id)
+                        runCatching { keepTranscript?.invoke(id) }
                         if (media.isBlank() && kept == 0) error("Its files could not be saved.")
                     }
                         .onSuccess { _saved.update { m -> m + (id to if (media.isBlank()) "files" else if (audioOnly) "audio" else "video") } }
@@ -157,12 +163,18 @@ class Offline(private val context: Context, private val store: CourseStore) {
             if (localStreams(id) != null) return true
             _progress.update { it + (id to -1f) }
             val ok = runCatching { save(id, mode == "audio") }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.isSuccess
-            if (ok) _saved.update { it + (id to mode) }
+            if (ok) { _saved.update { it + (id to mode) }; runCatching { keepTranscript?.invoke(id) } }
             return ok
         } finally {
             _progress.update { it - id }
             lock.unlock()
         }
+    }
+
+    /** Reads the transcripts that saved lessons are missing, in the background. Needs the network once. */
+    fun fillTranscripts(ids: Collection<String> = _saved.value.keys) {
+        if (ids.isEmpty()) return
+        scope.launch { ids.forEach { id -> runCatching { keepTranscript?.invoke(id) } } }
     }
 
     fun cancel(id: String) { jobs.remove(id)?.cancel(); _progress.update { it - id } }

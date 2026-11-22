@@ -122,6 +122,15 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         courses = app.obsilearn.data.CourseStore(this)
         offline = app.obsilearn.data.Offline(this, courses)
         offline.fetchFile = { sid, uri -> localFile(sid, uri) }
+        // A saved lesson keeps its transcript too: the subtitle file or podcast link can be gone offline.
+        offline.keepTranscript = keep@{ id ->
+            if (library.loadTranscript(id) != null) return@keep
+            val (course, _, lesson) = courses.find(id) ?: return@keep
+            if (lesson.subs.isBlank()) return@keep
+            val data = Transcripts.parseAny(courses.readText(course.sourceId, lesson.subs))
+            if (data.cues.isNotEmpty()) library.saveTranscript(id, data)
+        }
+        offline.fillTranscripts()
         docPlaces = app.obsilearn.data.DocPlaces(this)
         textIndex = app.obsilearn.data.TextIndex(java.io.File(filesDir, "text-index"), { library.loadTranscript(it) }, { library.transcriptStamp(it) })
         // The decoder for transcripts reads shares through the app's share reader.
