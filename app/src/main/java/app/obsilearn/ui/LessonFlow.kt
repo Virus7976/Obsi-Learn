@@ -72,6 +72,9 @@ import androidx.compose.foundation.layout.widthIn
 import app.obsi.core.ui.ReaderStyle
 import app.obsi.core.ui.TranscriptView
 import app.obsi.core.ui.rememberPictures
+import app.obsi.core.ui.rememberPageListen
+import app.obsi.core.ui.PageListenPlayer
+import androidx.compose.material.icons.rounded.Headphones
 import app.obsilearn.data.Lesson
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
@@ -211,6 +214,8 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
     val screenW = ctx.resources.displayMetrics.widthPixels
     val imageWidth = minOf(style.maxWidthPx, screenW - with(density) { 36.dp.roundToPx() })
     val pictures = rememberPictures(built, imageWidth)
+    // Read aloud, the same as in ObsiRead: the voice reads the file, lights the word and keeps going with the screen off.
+    val listen = rememberPageListen(itemId, item.meta.title, "", built)
 
     var tview by remember { mutableStateOf<TranscriptView?>(null) }
     var editingId by remember(itemId) { mutableStateOf<String?>(null) }
@@ -240,6 +245,7 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
                     factory = { c -> TranscriptView(c).also { tview = it } },
                     update = { tv ->
                         tv.onSeek = { }
+                        listen.attach(tv, d)
                         tv.onScrollDelta = {
                             atEnd = tv.progress() > 0.97f
                             tv.firstVisibleWord().let { w -> if (w >= 0 && restored[0]) word = w }
@@ -280,6 +286,12 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
                     enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut(),
                 ) { footer() }
                 androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+                // Listen: a button in the corner. While it reads, the small player takes its place.
+                if (!listen.hearing && editingId == null && !atEnd) androidx.compose.material3.SmallFloatingActionButton(
+                    onClick = { listen.listenHere() },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                ) { Icon(Icons.Rounded.Headphones, "Listen") }
+                PageListenPlayer(listen, Modifier.align(Alignment.BottomCenter), showBar = editingId == null)
             }
             FileHighlightBar(itemId, editingId, { editingId = null }, snackbar)
         }

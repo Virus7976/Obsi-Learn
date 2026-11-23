@@ -153,7 +153,7 @@
             </intent-filter>
         </service>
         <!-- The media card and headset buttons can start the last episode again after Android closed the app. -->
-        <receiver android:name="androidx.media3.session.MediaButtonReceiver" android:exported="true">
+        <receiver android:name=".player.MediaButtons" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
@@ -172,5 +172,14 @@
             android:enabled="true"
             android:exported="true"
             android:permission="android.permission.INTERNET" />
+        <!-- Read aloud (from obsi-core) for lesson files: the media notification and lock screen controls. -->
+        <service
+            android:name="app.obsi.core.speech.ReadAloudService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
