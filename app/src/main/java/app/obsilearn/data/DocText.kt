@@ -39,8 +39,8 @@ object DocText {
      * [picture] turns a picture address from a lesson page into one the reader can load (a file on the
      * phone), or null when it cannot be found.
      */
-    fun build(file: File, ext: String, pics: File? = null, picture: (String) -> String? = { null }): Out? = when {
-        ext == "pdf" -> pdf(file, pics)?.let { Out(it) }
+    fun build(file: File, ext: String, pics: File? = null, cleanPdf: Boolean = true, picture: (String) -> String? = { null }): Out? = when {
+        ext == "pdf" -> pdf(file, pics, cleanPdf)?.let { Out(it) }
         ext in pages -> Out(page(file.readText(), picture))
         ext == "txt" || ext == "text" -> Out(paragraphs(file.readText()))
         ext == "rtf" -> Out(paragraphs(rtf(file.readText())), "Text only. Formatting from the RTF file is left out.")
@@ -60,29 +60,35 @@ object DocText {
     /**
      * The PDF's text, one section per page. Null when the phone cannot read PDF text, or when the PDF has
      * almost no text (a scan): then the pages are the only way to show it.
+     * With [clean], text printed on page after page ([PdfClean]) and the page labels are left out, and a
+     * paragraph that runs over a page break is kept in one piece.
      */
-    fun pdf(file: File, pics: File? = null): String? {
+    fun pdf(file: File, pics: File? = null, clean: Boolean = true): String? {
         if (Build.VERSION.SDK_INT < 35) return null
         val pages = pdfLines(file) ?: return null
         val chars = pages.sumOf { p -> p.sumOf { it.length } }
         if (pages.isEmpty() || chars < 60 * pages.size) return null
         val found = pics?.let { runCatching { PdfPictures.find(file, it) }.getOrNull() }.orEmpty()
+        val repeated = if (clean) PdfClean.repeated(pages) else emptySet()
         return buildString {
+            val part = StringBuilder()
+            fun flush() { append(paragraphs(part.toString(), joinLines = true)); part.setLength(0) }
             pages.forEachIndexed { i, lines ->
-                if (pages.size > 1) append("<h6>Page ${i + 1}</h6>")
+                if (pages.size > 1 && !clean) { flush(); append("<h6>Page ${i + 1}</h6>") }
                 // Each picture goes in before the line under it, so it sits where it is on the page.
                 val left = found.filter { it.page == i }.sortedBy { it.line }.toMutableList()
-                val part = StringBuilder()
+                var pageStart = true
                 lines.forEachIndexed { n, text ->
-                    while (left.isNotEmpty() && left.first().line <= n) {
-                        append(paragraphs(part.toString(), joinLines = true)); part.setLength(0)
-                        append(img(left.removeAt(0)))
-                    }
+                    while (left.isNotEmpty() && left.first().line <= n) { flush(); append(img(left.removeAt(0))) }
+                    if (PdfClean.key(text) in repeated) return@forEachIndexed
+                    // Over a page break, text is joined only when the new page goes on mid-sentence (a small letter).
+                    if (pageStart && text.trim().firstOrNull()?.isLowerCase() != true) flush()
+                    pageStart = false
                     part.append(text).append('\n')
                 }
-                append(paragraphs(part.toString(), joinLines = true))
-                left.forEach { append(img(it)) }
+                if (left.isNotEmpty()) { flush(); left.forEach { append(img(it)) } }
             }
+            flush()
         }
     }
 

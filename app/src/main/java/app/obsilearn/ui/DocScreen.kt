@@ -30,6 +30,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Article
@@ -127,12 +132,13 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
         value = withContext(Dispatchers.IO) { runCatching { app.localFile(sourceId, req.uri) } }
     }
     // The text, built once off the main thread. Pictures in a lesson page are found next to it.
-    val read by produceState<Read?>(null, file) {
+    val cleanPdf = app.learn.state.collectAsState().value.cleanPdf
+    val read by produceState<Read?>(null, file, cleanPdf) {
         val f = file?.getOrNull() ?: return@produceState
         value = withContext(Dispatchers.Default) {
             if (!DocText.maybe(ext)) return@withContext Read(null, "", 0)
             val out = runCatching {
-                DocText.build(f, ext, File(ctx.cacheDir, "pdf-pictures")) { src ->
+                DocText.build(f, ext, File(ctx.cacheDir, "pdf-pictures"), cleanPdf) { src ->
                     runCatching { android.net.Uri.fromFile(app.localFile(sourceId, DocText.resolve(req.uri, src))).toString() }.getOrNull()
                 }
             }.getOrNull()
@@ -182,6 +188,28 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
                 }
             }
             IconButton(onClick = { file?.getOrNull()?.let { openOutside(ctx, app, it) } }) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open in another app") }
+            if (ext == "pdf" && r?.built != null) {
+                var more by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { more = true }) { Icon(Icons.Rounded.MoreVert, "More") }
+                    DropdownMenu(expanded = more, onDismissRequest = { more = false }, shape = RoundedCornerShape(24.dp)) {
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("Hide repeated page text")
+                                    Text(
+                                        "Lines on every page, like a copyright note, and the page numbers. Not read aloud.",
+                                        Modifier.width(220.dp), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            leadingIcon = { Icon(Icons.Rounded.CleaningServices, null) },
+                            trailingIcon = { if (cleanPdf) Icon(Icons.Rounded.Check, "On", tint = scheme.primary) },
+                            onClick = { more = false; app.learn.update { it.copy(cleanPdf = !it.cleanPdf) } },
+                        )
+                    }
+                }
+            }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {

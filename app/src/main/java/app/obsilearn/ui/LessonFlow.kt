@@ -216,6 +216,13 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
     val pictures = rememberPictures(built, imageWidth)
     // Read aloud, the same as in ObsiRead: the voice reads the file, lights the word and keeps going with the screen off.
     val listen = rememberPageListen(itemId, item.meta.title, "", built)
+    // The text changed under the highlights (repeated page text hidden or shown): move each one back onto its words.
+    LaunchedEffect(built) {
+        val texts = d.words.map { w -> d.text.substring(w.charStart, w.charEnd) }
+        if (Highlights.reanchor(item.highlights, texts) != null) {
+            app.library.edit(itemId) { it.copy(highlights = Highlights.reanchor(it.highlights, texts) ?: it.highlights) }
+        }
+    }
 
     var tview by remember { mutableStateOf<TranscriptView?>(null) }
     var editingId by remember(itemId) { mutableStateOf<String?>(null) }

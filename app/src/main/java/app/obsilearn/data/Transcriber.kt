@@ -43,6 +43,8 @@ data class LearnSettings(
     val pagesHintSeen: Boolean = false,
     /** PDFs shown dark: the page turned to black, the text to light, colours kept close. */
     val darkPdf: Boolean = true,
+    /** A PDF as text leaves out what it prints on page after page (a copyright line, page numbers) and the page labels. */
+    val cleanPdf: Boolean = true,
     /** "phone" (offline, free) or "cloud" (your own key, fast and exact). Only counts once [engineChosen]. */
     val engine: String = "phone",
     /** The engine was picked by hand. Until then, your key is used when one is set up, else the phone. */

@@ -411,7 +411,7 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
                     val id = fileItem(l.id, uri, title, ext) ?: return@runCatching
                     if (textIndex.has(id)) { ok++; return@runCatching }
                     val local = localFile(c.sourceId, uri)
-                    val out = app.obsilearn.data.DocText.build(local, ext) ?: return@runCatching
+                    val out = app.obsilearn.data.DocText.build(local, ext, cleanPdf = learn.state.value.cleanPdf) ?: return@runCatching
                     val built = app.obsilearn.data.DocText.article(out.html, title)
                     if (built.doc.words.isEmpty()) return@runCatching
                     textIndex.putFile(id, built.doc.words.map { w -> built.doc.text.substring(w.charStart, w.charEnd) })
