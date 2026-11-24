@@ -31,6 +31,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
+import app.obsi.core.ui.ActionMenu
+import app.obsi.core.ui.QuickAction
+import app.obsi.core.ui.ReaderTheme
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.DropdownMenu
@@ -167,6 +174,12 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
     // Reading a file counts as time spent, for the shared stats.
     CountTime(item = lesson?.title ?: req.title)
 
+    // Find, the contents, Listen and reading settings: the top row and the text share them.
+    val tools = remember(itemId) { DocTools() }
+    val settings by app.settings.state.collectAsState()
+    // The reader colours you picked in reading settings, for the text. The pages keep the app's own.
+    ReaderTheme(if (showText) settings.readerTheme else "app") {
+    val scheme = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().background(scheme.surface).statusBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
@@ -187,26 +200,57 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
                     Icon(if (learn.darkPdf) Icons.Rounded.LightMode else Icons.Rounded.DarkMode, if (learn.darkPdf) "Show the PDF light" else "Show the PDF dark")
                 }
             }
-            IconButton(onClick = { file?.getOrNull()?.let { openOutside(ctx, app, it) } }) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open in another app") }
-            if (ext == "pdf" && r?.built != null) {
+            if (!showText) IconButton(onClick = { file?.getOrNull()?.let { openOutside(ctx, app, it) } }) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open in another app") }
+            else {
+                IconButton(onClick = { tools.searching = !tools.searching }) { Icon(Icons.Rounded.Search, "Find in this file") }
                 var more by remember { mutableStateOf(false) }
                 Box {
                     IconButton(onClick = { more = true }) { Icon(Icons.Rounded.MoreVert, "More") }
                     DropdownMenu(expanded = more, onDismissRequest = { more = false }, shape = RoundedCornerShape(24.dp)) {
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text("Hide repeated page text")
-                                    Text(
-                                        "Lines on every page, like a copyright note, and the page numbers. Not read aloud.",
-                                        Modifier.width(220.dp), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
-                                    )
-                                }
+                        val listen = tools.listen
+                        val quick = listOfNotNull(
+                            QuickAction("find", "Find", Icons.Rounded.Search, on = tools.searching) { more = false; tools.searching = true },
+                            QuickAction("contents", "Contents", Icons.AutoMirrored.Rounded.FormatListBulleted, enabled = tools.hasContents) { more = false; tools.contents = true },
+                            QuickAction("listen", "Listen", Icons.Rounded.Headphones, on = listen?.hearing == true, enabled = listen != null) {
+                                more = false
+                                listen?.let { if (!it.hearing) it.listenHere(); it.showSheet = true }
                             },
-                            leadingIcon = { Icon(Icons.Rounded.CleaningServices, null) },
-                            trailingIcon = { if (cleanPdf) Icon(Icons.Rounded.Check, "On", tint = scheme.primary) },
-                            onClick = { more = false; app.learn.update { it.copy(cleanPdf = !it.cleanPdf) } },
+                            QuickAction("reading", "Reading", Icons.Rounded.TextFields, on = tools.reading) { more = false; tools.reading = true },
+                            if (reading) QuickAction("done", "Done", Icons.Rounded.TaskAlt, on = done) {
+                                if (done) app.setDone(req.lessonId, false) else { app.setDone(req.lessonId, true); app.finished(req.lessonId) }
+                            } else null,
+                            QuickAction("open", "Other app", Icons.AutoMirrored.Rounded.OpenInNew) { more = false; file?.getOrNull()?.let { openOutside(ctx, app, it) } },
                         )
+                        ActionMenu(
+                            quick, settings.quickButtons ?: listOf("find", "contents", "listen", "reading"),
+                            onPicked = { keys -> app.settings.update { it.copy(quickButtons = keys) } },
+                        ) { _ ->
+                            if (reading) DropdownMenuItem(
+                                text = { Text("Mark as done") },
+                                leadingIcon = { Icon(Icons.Rounded.TaskAlt, null) },
+                                trailingIcon = { if (done) Icon(Icons.Rounded.Check, "On", tint = scheme.primary) },
+                                onClick = { if (done) app.setDone(req.lessonId, false) else { app.setDone(req.lessonId, true); app.finished(req.lessonId) } },
+                            )
+                            if (ext == "pdf") DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("Hide repeated page text")
+                                        Text(
+                                            "Lines on every page, like a copyright note, and the page numbers. Not read aloud.",
+                                            Modifier.width(220.dp), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.CleaningServices, null) },
+                                trailingIcon = { if (cleanPdf) Icon(Icons.Rounded.Check, "On", tint = scheme.primary) },
+                                onClick = { more = false; app.learn.update { it.copy(cleanPdf = !it.cleanPdf) } },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Open in another app") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.OpenInNew, null) },
+                                onClick = { more = false; file?.getOrNull()?.let { openOutside(ctx, app, it) } },
+                            )
+                        }
                     }
                 }
             }
@@ -223,7 +267,7 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
                 )
                 ext == "zip" -> ZipList(f.getOrThrow(), req.lessonId)
                 ext in DocHtml.images -> ZoomImage(f.getOrThrow())
-                showText -> DocTextReader(itemId, r!!.built!!, r.note) { if (reading) NextLessonCard(req.lessonId, markDone = true, Modifier.fillMaxWidth()) }
+                showText -> DocTextReader(itemId, r!!.built!!, r.note, tools) { if (reading) NextLessonCard(req.lessonId, markDone = true, Modifier.fillMaxWidth()) }
                 ext == "pdf" -> Column(Modifier.fillMaxSize()) {
                     // Say once how to highlight on the pages, when this PDF has text.
                     if (r?.built != null && android.os.Build.VERSION.SDK_INT >= 35) PagesHint()
@@ -240,8 +284,9 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
                 )
             }
         }
-        // A reading lesson: say you are done, and go on.
-        if (reading) {
+        // A reading lesson: say you are done, and go on. As text, that is in the menu and at the end of the text,
+        // and the reading bar takes the bottom.
+        if (reading && !showText) {
             Row(
                 Modifier.fillMaxWidth().background(scheme.surfaceContainer).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -262,7 +307,8 @@ fun DocScreen(req: DocRequest, onBack: () -> Unit) {
                     }
                 }
             }
-        } else Spacer(Modifier.navigationBarsPadding())
+        } else if (!showText) Spacer(Modifier.navigationBarsPadding())
+    }
     }
 }
 

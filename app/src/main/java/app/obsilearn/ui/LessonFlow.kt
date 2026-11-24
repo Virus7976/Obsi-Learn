@@ -74,6 +74,15 @@ import app.obsi.core.ui.TranscriptView
 import app.obsi.core.ui.rememberPictures
 import app.obsi.core.ui.rememberPageListen
 import app.obsi.core.ui.PageListenPlayer
+import app.obsi.core.ui.PageListen
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableIntStateOf
+import app.obsi.core.ui.ReadingBar
+import app.obsi.core.ui.ContentsSheet
+import app.obsi.core.ui.ReadingSheet
+import app.obsi.core.ui.headingsOf
+import app.obsi.core.ui.timeLeftLabel
+import app.obsi.core.ui.readerTypeface
 import androidx.compose.material.icons.rounded.Headphones
 import app.obsilearn.data.Lesson
 import kotlinx.coroutines.delay
@@ -169,11 +178,24 @@ fun NextLessonCard(current: String, markDone: Boolean, modifier: Modifier = Modi
 }
 
 /**
- * A file's text in the same reader as transcripts: highlight with a finger, tap a highlight for its note,
- * tags and colour. Your place is kept by word, so the file opens where you stopped.
+ * What the top row of a file's page and its text share: find, the contents, reading settings and Listen.
+ * The page holds it, so its menu can open what the text shows.
+ */
+class DocTools {
+    var searching by mutableStateOf(false)
+    var contents by mutableStateOf(false)
+    var reading by mutableStateOf(false)
+    var hasContents by mutableStateOf(false)
+    var listen by mutableStateOf<PageListen?>(null)
+}
+
+/**
+ * A file's text in the same reader as transcripts and articles: highlight with a finger, tap a highlight for
+ * its note, tags and colour. The bar along the bottom is the same as ObsiRead's: highlights, the contents and
+ * how much is left, Listen, reading settings, and Clip. Your place is kept by word, so the file opens where you stopped.
  */
 @Composable
-fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer: @Composable () -> Unit) {
+fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, tools: DocTools, footer: @Composable () -> Unit) {
     val app = LocalApp.current
     val ctx = LocalContext.current
     val settings by app.settings.state.collectAsState()
@@ -185,14 +207,7 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
     val colors = remember(d, item.highlights) { Highlights.colorByWord(d.words, item.highlights) }
     val noted = remember(d, item.highlights) { Highlights.notedRuns(d.words, item.highlights) }
     val runs = remember(d, item.highlights) { Highlights.runs(d.words, item.highlights) }
-    val typeface = remember(settings.readerFont, settings.customFontPath) {
-        when (settings.readerFont) {
-            "sans" -> ResourcesCompat.getFont(ctx, CoreR.font.atkinson_regular)
-            "system" -> Typeface.DEFAULT
-            "custom" -> customTypeface(settings.customFontPath) ?: ResourcesCompat.getFont(ctx, CoreR.font.newsreader)
-            else -> ResourcesCompat.getFont(ctx, CoreR.font.newsreader)
-        }
-    }
+    val typeface = remember(settings.readerFont, settings.customFontPath, settings.fontWeight) { readerTypeface(ctx, settings) }
     val dark = scheme.background.let { 0.2126f * it.red + 0.7152f * it.green + 0.0722f * it.blue } < 0.5f
     val style = ReaderStyle(
         textColor = scheme.onSurface.toArgb(),
@@ -216,6 +231,16 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
     val pictures = rememberPictures(built, imageWidth)
     // Read aloud, the same as in ObsiRead: the voice reads the file, lights the word and keeps going with the screen off.
     val listen = rememberPageListen(itemId, item.meta.title, "", built)
+    SideEffect { tools.listen = listen }
+    val heads = remember(built) { headingsOf(built) }
+    SideEffect { tools.hasContents = heads.size >= 2 }
+    var progress by remember(itemId) { mutableStateOf(0f) }
+    var showHighlights by remember { mutableStateOf(false) }
+    var showSave by remember { mutableStateOf(false) }
+    // Find in this file. Searches only this text.
+    var query by remember(itemId) { mutableStateOf("") }
+    var matchCount by remember(itemId) { mutableIntStateOf(0) }
+    var matchAt by remember(itemId) { mutableIntStateOf(-1) }
     // The text changed under the highlights (repeated page text hidden or shown): move each one back onto its words.
     LaunchedEffect(built) {
         val texts = d.words.map { w -> d.text.substring(w.charStart, w.charEnd) }
@@ -231,6 +256,11 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
     val restored = remember(itemId) { booleanArrayOf(false) }
     androidx.activity.compose.BackHandler(enabled = editingId != null) { editingId = null }
     LaunchedEffect(editingId) { if (editingId == null) tview?.stopResize() }
+    LaunchedEffect(tools.searching, tview) {
+        tview?.searching = tools.searching
+        if (!tools.searching) { tview?.clearSearch(); query = ""; matchCount = 0; matchAt = -1 }
+    }
+    androidx.activity.compose.BackHandler(enabled = tools.searching) { tools.searching = false }
     // The place is kept a moment after you stop scrolling, not on every pixel.
     LaunchedEffect(itemId) {
         androidx.compose.runtime.snapshotFlow { word }.drop(1).debounce(800).collect { w ->
@@ -240,8 +270,19 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
     val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    val hereHead = heads.indexOfLast { it.word <= word }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
+            if (tools.searching) FindBar(
+                query = query, count = matchCount, at = matchAt, hint = "Find in this file",
+                onQuery = {
+                    query = it
+                    matchCount = tview?.search(it) ?: 0
+                    matchAt = if (matchCount > 0) 0 else -1
+                },
+                onStep = { step -> tview?.goToMatch(matchAt + step)?.let { matchAt = it } },
+                onClose = { tools.searching = false },
+            )
             if (note.isNotBlank()) Text(
                 note, Modifier.fillMaxWidth().background(scheme.surfaceContainer).padding(horizontal = 16.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
@@ -254,7 +295,8 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
                         tv.onSeek = { }
                         listen.attach(tv, d)
                         tv.onScrollDelta = {
-                            atEnd = tv.progress() > 0.97f
+                            progress = tv.progress()
+                            atEnd = progress > 0.97f
                             tv.firstVisibleWord().let { w -> if (w >= 0 && restored[0]) word = w }
                         }
                         tv.currentColor = settings.highlightColor
@@ -293,16 +335,47 @@ fun DocTextReader(itemId: String, built: ArticleDoc.Built, note: String, footer:
                     enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut(),
                 ) { footer() }
                 androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
-                // Listen: a button in the corner. While it reads, the small player takes its place.
-                if (!listen.hearing && editingId == null && !atEnd) androidx.compose.material3.SmallFloatingActionButton(
-                    onClick = { listen.listenHere() },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                ) { Icon(Icons.Rounded.Headphones, "Listen") }
                 PageListenPlayer(listen, Modifier.align(Alignment.BottomCenter), showBar = editingId == null)
             }
+            if (editingId == null) ReadingBar(
+                progress = progress,
+                timeLeft = timeLeftLabel(progress, d.words.size),
+                highlights = item.highlights.size,
+                onHighlights = { showHighlights = true },
+                hasContents = heads.size >= 2,
+                onContents = { tools.contents = true },
+                hearing = listen.hearing,
+                canListen = true,
+                onListen = { listen.listenHere() },
+                onReading = { tools.reading = true },
+                clipped = item.clippedAt > 0,
+                unsaved = item.highlights.count { it.createdAt > item.clippedAt },
+                onClip = { showSave = true },
+            )
             FileHighlightBar(itemId, editingId, { editingId = null }, snackbar)
         }
     }
+
+    if (tools.contents) ContentsSheet(heads, hereHead, onDismiss = { tools.contents = false }) { h ->
+        tools.contents = false
+        tview?.scrollToWord(h.word)
+    }
+    if (tools.reading) ReadingSheet(onDismiss = { tools.reading = false }, behavior = false)
+    if (showHighlights) HighlightsSheet(
+        video = item,
+        onDismiss = { showHighlights = false },
+        onJump = { h -> showHighlights = false; if (h.w0 >= 0) tview?.scrollToWord(h.w0) },
+    )
+    if (showSave) SaveSheet(
+        video = item,
+        lines = emptyList(),
+        onDismiss = { showSave = false },
+        onDone = { message, ok ->
+            showSave = false
+            if (ok) app.library.edit(itemId) { it.copy(clippedAt = System.currentTimeMillis()) }
+            scope.launch { snackbar.showSnackbar(message) }
+        },
+    )
 }
 
 /**

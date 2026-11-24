@@ -805,7 +805,7 @@ private fun Color.luminanceApprox(): Float = 0.2126f * red + 0.7152f * green + 0
 // ---------- highlights sheet ----------
 
 @Composable
-private fun HighlightsSheet(video: SavedVideo, onDismiss: () -> Unit, onJump: (Highlight) -> Unit) {
+internal fun HighlightsSheet(video: SavedVideo, onDismiss: () -> Unit, onJump: (Highlight) -> Unit) {
     val app = LocalApp.current
     val scope = rememberCoroutineScope()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1029,7 +1029,7 @@ internal fun HighlightNoteBar(
 
 /** Search box for the transcript in front of you. Shows how many matches and steps between them. */
 @Composable
-private fun FindBar(query: String, count: Int, at: Int, onQuery: (String) -> Unit, onStep: (Int) -> Unit, onClose: () -> Unit) {
+internal fun FindBar(query: String, count: Int, at: Int, onQuery: (String) -> Unit, onStep: (Int) -> Unit, onClose: () -> Unit, hint: String = "Find in this lesson") {
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Row(
@@ -1041,7 +1041,7 @@ private fun FindBar(query: String, count: Int, at: Int, onQuery: (String) -> Uni
             onValueChange = onQuery,
             modifier = Modifier.weight(1f).focusRequester(focus),
             singleLine = true,
-            placeholder = { Text("Find in this lesson") },
+            placeholder = { Text(hint) },
             shape = RoundedCornerShape(50),
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
             keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onStep(1) }),
