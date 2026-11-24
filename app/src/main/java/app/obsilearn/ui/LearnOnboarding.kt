@@ -1,5 +1,7 @@
 package app.obsilearn.ui
 
+import app.obsi.core.obsidian.ObsiFolder
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,7 +59,7 @@ private fun ProgressStep() {
     SwitchLine("Course notes", "Keep each course's progress in your vault.", l.progressNotes) { v -> app.learn.update { it.copy(progressNotes = v) } }
     if (l.progressNotes) {
         OutlinedTextField(
-            l.notesFolder, { v -> app.learn.update { it.copy(notesFolder = v.trim('/').ifBlank { "ObsiLearn" }) } },
+            app.notesFolder(), { v -> app.learn.update { it.copy(notesFolder = v.trim('/').takeIf { f -> f != ObsiFolder.of(app.settings.value) }.orEmpty()) } },
             label = { Text("Folder in your vault") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
         val vault = ObsiOnboardingHelp.folderName(s)
@@ -65,13 +67,13 @@ private fun ProgressStep() {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("The notes go here", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
                 Text(
-                    (if (vault.isBlank()) "(no vault yet)" else vault) + " / " + l.notesFolder + " / Course name.md",
+                    (if (vault.isBlank()) "(no vault yet)" else vault) + " / " + app.notesFolder() + " / Course name.md",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
         }
         SwitchLine("Keep out of search", "Adds the folder to Obsidian's Excluded files.", l.hideFromSearch) { v ->
-            val ok = VaultNotes.setExcluded(ctx, app.settings.value, l.notesFolder, v)
+            val ok = VaultNotes.setExcluded(ctx, app.settings.value, app.notesFolder(), v)
             if (ok) app.learn.update { it.copy(hideFromSearch = v) }
             else android.widget.Toast.makeText(ctx, "Pick your vault folder first.", android.widget.Toast.LENGTH_SHORT).show()
         }

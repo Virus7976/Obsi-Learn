@@ -1,5 +1,7 @@
 package app.obsilearn.ui
 
+import app.obsi.core.obsidian.ObsiFolder
+
 import app.obsilearn.data.PhoneSpeech
 import app.obsi.core.ai.Ai
 import androidx.compose.foundation.layout.Arrangement
@@ -74,7 +76,7 @@ fun VaultNotesScreen(onBack: () -> Unit) {
     VaultNotesPage(
         onBack = onBack,
         title = "Vault notes",
-        folder = l.notesFolder,
+        folder = app.notesFolder(),
         idKey = "obsilearn",
         describe = { n -> if (n.type == "obsilearn-progress") byId[n.id]?.let { "Progress of ${it.title}" } ?: "Progress of a course you removed" else null },
     ) {
@@ -85,7 +87,7 @@ fun VaultNotesScreen(onBack: () -> Unit) {
         SwitchLine("Go on to the next lesson", "When a lesson ends, the next one starts. A reading lesson waits for you to open it.", l.autoNext) { v -> app.learn.update { it.copy(autoNext = v) } }
         SwitchLine("Course notes", "Keep each course's progress in your vault, so it syncs.", l.progressNotes) { v -> app.learn.update { it.copy(progressNotes = v) } }
         OutlinedTextField(
-            l.notesFolder, { v -> app.learn.update { it.copy(notesFolder = v.trim('/').ifBlank { "ObsiLearn" }) } },
+            app.notesFolder(), { v -> app.learn.update { it.copy(notesFolder = v.trim('/').takeIf { f -> f != ObsiFolder.of(app.settings.value) }.orEmpty()) } },
             label = { Text("Folder") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
         SwitchLine(
@@ -93,7 +95,7 @@ fun VaultNotesScreen(onBack: () -> Unit) {
             "Adds the folder to Obsidian's Excluded files. The notes stay in the file list.",
             l.hideFromSearch,
         ) { v ->
-            val ok = VaultNotes.setExcluded(ctx, app.settings.value, l.notesFolder, v)
+            val ok = VaultNotes.setExcluded(ctx, app.settings.value, app.notesFolder(), v)
             if (ok) app.learn.update { it.copy(hideFromSearch = v) }
             else android.widget.Toast.makeText(ctx, "Could not change Obsidian's settings. Is the vault folder picked?", android.widget.Toast.LENGTH_LONG).show()
         }

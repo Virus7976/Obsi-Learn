@@ -165,8 +165,13 @@ class CourseStore(private val context: Context) : JsonFileStore<CourseData>(File
     /** Called with the lesson ids of a source you removed, so the app can take them out of the library. */
     var onRemoved: ((Set<String>) -> Unit)? = null
 
+    /** Called with the courses of a source you removed (a podcast you unfollowed), so their notes can go too. */
+    var onCoursesRemoved: ((List<Course>) -> Unit)? = null
+
     fun removeSource(id: String) {
-        val gone = _state.value.courses.filter { it.sourceId == id }.flatMapTo(HashSet()) { c -> c.lessons.map { it.id } }
+        val removed = _state.value.courses.filter { it.sourceId == id }
+        if (removed.isNotEmpty()) onCoursesRemoved?.invoke(removed)
+        val gone = removed.flatMapTo(HashSet()) { c -> c.lessons.map { it.id } }
         _state.update { d -> d.copy(sources = d.sources.filterNot { it.id == id }, courses = d.courses.filterNot { it.sourceId == id }) }
         persist(_state.value)
         if (gone.isNotEmpty()) onRemoved?.invoke(gone)

@@ -236,7 +236,7 @@ fun CourseScreen(courseId: String, onBack: () -> Unit) {
                         menu = false
                         val s = app.settings.value
                         if (!VaultNotes.hasVault(s)) say("Pick your vault folder first: Settings, then Obsidian.")
-                        else Sender.openNote(ctx, VaultNotes.vaultName(s), app.learn.value.notesFolder + "/" + ProgressNotes.fileName(course))
+                        else Sender.openNote(ctx, VaultNotes.vaultName(s), app.notesFolder() + "/" + ProgressNotes.fileName(course))
                     }
                     MenuRow("Hide this course", Icons.Rounded.VisibilityOff) { menu = false; app.courses.editCourse(course.id) { it.copy(hidden = true) }; onBack() }
                 }

@@ -142,6 +142,15 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         appScope.launch { courses.state.collect { library.sync(lessonMetas()) } }
         // Only a show or course you removed takes its lessons out. A refresh never does.
         courses.onRemoved = { ids -> appScope.launch { dropRemoved(ids) } }
+        // A podcast you unfollow, or a course you remove: its note in the vault goes to Obsidian's trash (.trash),
+        // where it can be put back.
+        courses.onCoursesRemoved = { gone ->
+            appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val s = settings.value
+                val folder = notesFolder()
+                gone.forEach { c -> app.obsi.core.obsidian.ObsiFolder.trash(this@ObsiLearnApp, s, folder, app.obsilearn.data.ProgressNotes.fileName(c) + ".md") }
+            }
+        }
         moveOldTranscriptKey()
 
         // A lesson saved while it plays goes on from the saved copy.
@@ -259,6 +268,31 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
 
     private val written = HashMap<String, String>()
 
+    /** The vault folder for course notes: Obsi/ObsiLearn, unless you picked another. */
+    fun notesFolder(): String = learn.value.notesFolder.trim('/').ifBlank { app.obsi.core.obsidian.ObsiFolder.of(settings.value) }
+
+    /**
+     * Before 0.6.3 course notes went to an ObsiLearn folder at the top of the vault. They move into the Obsi
+     * folder once, so all Obsi apps share one folder. A note already there is never written over.
+     */
+    private fun moveOldNotesOnce() {
+        val l = learn.value
+        if (l.foldersMoved) return
+        val old = l.notesFolder.trim('/')
+        if (old == "ObsiLearn") learn.update { it.copy(notesFolder = "") }
+        val s = settings.value
+        if (!app.obsi.core.obsidian.VaultNotes.hasVault(s)) return
+        if (old == "ObsiLearn" || old.isBlank()) {
+            val to = app.obsi.core.obsidian.ObsiFolder.of(s)
+            app.obsi.core.obsidian.ObsiFolder.moveAll(this, s, "ObsiLearn", to)
+            if (l.hideFromSearch) {
+                app.obsi.core.obsidian.VaultNotes.setExcluded(this, s, "ObsiLearn", false)
+                app.obsi.core.obsidian.VaultNotes.setExcluded(this, s, to, true)
+            }
+        }
+        learn.update { it.copy(foldersMoved = true) }
+    }
+
     /**
      * Writes a course's note in the vault when its progress changes and nothing is playing,
      * so a sync tool gets a few calm writes and not one every few seconds.
@@ -266,6 +300,7 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     private fun watchProgressNotes() {
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { moveOldNotesOnce() }
             kotlinx.coroutines.flow.combine(library.videos, player.state.map { it.playing }.distinctUntilChanged(), learn.state, rounds.state) { v: List<app.obsilearn.data.SavedVideo>, playing: Boolean, l: app.obsilearn.data.LearnSettings, _: Any -> Triple(v, playing, l) }
                 .debounce(2500L)
                 .collect { (videos, playing, l) ->
@@ -280,7 +315,7 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
                         // While it plays, only a lesson that just got done is worth a write.
                         val before = written[c.id]
                         if (playing && before != null && before.count { it == 'x' } == sig.count { it == 'x' }) continue
-                        if (app.obsilearn.data.ProgressNotes.write(this@ObsiLearnApp, settings.value, l.notesFolder, c, byId, rounds.of(c.id))) written[c.id] = sig
+                        if (app.obsilearn.data.ProgressNotes.write(this@ObsiLearnApp, settings.value, notesFolder(), c, byId, rounds.of(c.id))) written[c.id] = sig
                     }
                 }
         }
@@ -292,7 +327,7 @@ class ObsiLearnApp : Application(), app.obsi.core.ObsiHost {
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val byId = library.videos.value.associateBy { it.meta.id }
             for (c in courses.courses) {
-                val text = app.obsilearn.data.ProgressNotes.read(this@ObsiLearnApp, settings.value, learn.value.notesFolder, c) ?: continue
+                val text = app.obsilearn.data.ProgressNotes.read(this@ObsiLearnApp, settings.value, notesFolder(), c) ?: continue
                 // Rounds: an older note's ticks belong to a round that is over. A newer one means another phone started again.
                 val noteRound = app.obsilearn.data.ProgressNotes.round(text)
                 val here = rounds.of(c.id).current

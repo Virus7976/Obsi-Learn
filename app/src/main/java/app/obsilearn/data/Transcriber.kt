@@ -65,8 +65,10 @@ data class LearnSettings(
     val keepVtt: Boolean = false,
     /** Write course progress into the vault as notes. */
     val progressNotes: Boolean = true,
-    /** The folder in the vault for course notes. */
-    val notesFolder: String = "ObsiLearn",
+    /** The folder in the vault for course notes. Blank is ObsiLearn's folder in the Obsi folder: Obsi/ObsiLearn. */
+    val notesFolder: String = "",
+    /** Set once the notes in the old ObsiLearn folder were moved into the Obsi folder. */
+    val foldersMoved: Boolean = false,
     /** The notes folder is in Obsidian's Excluded files, so it stays out of search. */
     val hideFromSearch: Boolean = false,
 )
